@@ -132,7 +132,7 @@ def extract_with_ytdlp(url: str) -> dict:
 @app.get("/api/explore")
 async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub"):
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Cookie': 'has_accepted_cookie=1; age_verified=1;'
     }
 
@@ -163,24 +163,24 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         if provider == "xnxx":
             items = tree.xpath('//div[contains(@class, "mozaique")]//div[contains(@class, "thumb-block")]')
             for item in items:
-                link_elems = item.xpath('.//p[@class="title"]//a/@href | .//a[contains(@class, "pure-u")]/@href')
-                if not link_elems:
-                    link_elems = item.xpath('.//a/@href')
-                
-                href = next((l for l in link_elems if l and '/video-' in l), None)
+                link_elems = item.xpath('.//div[@class="thumb-under"]//a/@href | .//a[contains(@class, "pure-u")]/@href | .//a/@href')
+                href = next((l for l in link_elems if l and ('/video-' in l or '/video.' in l)), None)
                 if not href:
                     continue
                 
                 vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
                 full_url = f"https://www.xnxx.com{href}" if href.startswith('/') else href
 
-                title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text()')
-                title = title_elems[0].strip() if title_elems else "Unknown Video"
+                title_elems = item.xpath('.//div[@class="thumb-under"]//a/@title | .//div[@class="thumb-under"]//a/text() | .//a/@title')
+                title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
 
-                raw_thumbs = item.xpath('.//img/@data-src | .//img/@src')
-                thumb = raw_thumbs[0] if raw_thumbs else ""
+                raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
+                thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
 
-                if not thumb or "data:image" in thumb:
+                if not thumb and raw_thumbs:
+                    thumb = raw_thumbs[0]
+
+                if not thumb:
                     continue
 
                 videos.append({
@@ -204,13 +204,16 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                 vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
                 full_url = f"https://www.xvideos.com{href}" if href.startswith('/') else href
 
-                title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text()')
-                title = title_elems[0].strip() if title_elems else "Unknown Video"
+                title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text() | .//a/@title')
+                title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
 
-                raw_thumbs = item.xpath('.//img/@data-src | .//img/@src')
-                thumb = raw_thumbs[0] if raw_thumbs else ""
+                raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
+                thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
 
-                if not thumb or "data:image" in thumb:
+                if not thumb and raw_thumbs:
+                    thumb = raw_thumbs[0]
+
+                if not thumb:
                     continue
 
                 videos.append({
@@ -252,7 +255,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         return JSONResponse(videos)
 
     except Exception as e:
-    
         logger.error(f"Explore error: {e}")
         return JSONResponse([])
 
@@ -294,4 +296,4 @@ async def fallback_proxy_image(url: str):
 
 @app.get("/")
 def health():
-    return {"status": "Online", "engine": "yt-dlp Core (Pornhub, XNXX, XVideos) + Metadata Engine"}
+    return {"status": "Online", "engine": "yt-dlp Multi-Hub Core (Pornhub, XNXX, XVideos) + Metadata Engine"}
