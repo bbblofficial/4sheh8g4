@@ -309,7 +309,7 @@ async def extract_endpoint(url: str):
     if not url:
         return JSONResponse({"status": "error", "error": "Missing URL"})
     target_url = unquote(url)
-    if "viewkey=" not in target_url and "xnxx.com" not in target_URL and "xvideos.com" not in target_url:
+    if "viewkey=" not in target_url and "xnxx.com" not in target_url and "xvideos.com" not in target_url:
         if len(target_url) in [13, 15, 16] and "." not in target_url:
              target_url = f"https://www.pornhub.com/view_video.php?viewkey={target_url}"
     loop = asyncio.get_running_loop()
