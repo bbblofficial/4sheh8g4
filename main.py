@@ -137,16 +137,10 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
     }
 
     if provider == "xnxx":
-        if page <= 1:
-            search_url = f"https://www.xnxx.com/search/{quote(q)}"
-        else:
-            search_url = f"https://www.xnxx.com/search/{quote(q)}/{page}"
+        search_url = f"https://www.xnxx.com/search/{quote(q)}" if page <= 1 else f"https://www.xnxx.com/search/{quote(q)}/{page}"
     elif provider == "xvideos":
         p_val = page - 1 if page > 1 else 0
-        if p_val == 0:
-            search_url = f"https://www.xvideos.com/?k={quote(q)}"
-        else:
-            search_url = f"https://www.xvideos.com/?k={quote(q)}&p={p_val}"
+        search_url = f"https://www.xvideos.com/?k={quote(q)}" if p_val == 0 else f"https://www.xvideos.com/?k={quote(q)}&p={p_val}"
     else:
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
     
@@ -176,20 +170,12 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 
                 raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
                 thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
-
                 if not thumb and raw_thumbs:
                     thumb = raw_thumbs[0]
-
                 if not thumb:
                     continue
 
-                videos.append({
-                    "vkey": vid_id,
-                    "title": title,
-                    "thumbnail": thumb,
-                    "url": full_url,
-                    "provider": "xnxx"
-                })
+                videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xnxx"})
                 if len(videos) >= 24:
                     break
 
@@ -209,36 +195,41 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 
                 raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
                 thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
+                if not thumb and raw_thumbs:
+                    thumb = raw_thumbs[0]
+                if not thumb:
+                    continue
 
+                videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xvideos"})
+                if len(videos) >= 24:
+                    break
+        else:
+            # Updated Pornhub robust card parsing
+            items = tree.xpath('//li[contains(@class, "js-pop videoblock") or contains(@class, "pcVideoListItem")]')
+            if not items:
+                items = tree.xpath('//ul[@id="videoSearchResult"]//li')
+
+            for item in items:
+                vkey = item.get("data-video-vkey") or next(iter(item.xpath('.//@data-video-vkey')), None)
+                if not vkey:
+                    # Fallback pattern extraction from href links if attribute is missing
+                    hrefs = item.xpath('.//a[contains(@href, "viewkey=")]/@href')
+                    for h in hrefs:
+                        if "viewkey=" in h:
+                            vkey = h.split("viewkey=")[1].split("&")[0]
+                            break
+                if not vkey:
+                    continue
+
+                title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title')
+                title = title_elem[0].strip() if title_elem else "Unknown Video"
+
+                raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@src')
+                thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t), "")
                 if not thumb and raw_thumbs:
                     thumb = raw_thumbs[0]
 
                 if not thumb:
-                    continue
-
-                videos.append({
-                    "vkey": vid_id,
-                    "title": title,
-                    "thumbnail": thumb,
-                    "url": full_url,
-                    "provider": "xvideos"
-                })
-                if len(videos) >= 24:
-                    break
-        else:
-            items = tree.xpath('//li[contains(@class, "pcVideoListItem")]')
-            for item in items:
-                vkey = item.get("data-video-vkey") or (item.xpath('.//@data-video-vkey') or [None])[0]
-                if not vkey:
-                    continue
-
-                title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt')
-                title = title_elem[0].strip() if title_elem else "Unknown Video"
-
-                raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@src')
-                thumb = raw_thumbs[0] if raw_thumbs else ""
-                
-                if not thumb or "data:image" in thumb or "blank" in thumb:
                     continue
 
                 videos.append({
@@ -281,8 +272,8 @@ async def fallback_proxy_image(url: str):
         target = "https:" + target
         
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            req = await client.get(target)
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            req = await client.get(target, headers={'User-Agent': 'Mozilla/5.0'})
             return StreamingResponse(
                 (chunk async for chunk in req.aiter_bytes()),
                 status_code=req.status_code,
