@@ -138,7 +138,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Cookie': 'has_accepted_cookie=1; age_verified=1;',
-        'Referer': 'https://www.pornhub.com/'
+        'Referer': 'https://www.xvideos.com/' if provider == "xvideos" else 'https://www.pornhub.com/'
     }
 
     if provider == "xnxx":
@@ -156,7 +156,13 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         if resp.status_code != 200:
             return JSONResponse([])
 
-        tree = html.fromstring(resp.content)
+        # Ensure correct decoding for UTF-8 character sets (Persian/Arabic/Hindi)
+        try:
+            html_content = resp.content.decode('utf-8')
+        except Exception:
+            html_content = resp.text
+
+        tree = html.fromstring(html_content)
         videos = []
 
         if provider == "xnxx":
@@ -205,11 +211,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 
                 title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text() | .//a/@title')
                 title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
-
-                try:
-                    title = title.encode('utf-8', 'ignore').decode('utf-8')
-                except Exception:
-                    pass
 
                 raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
                 thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
@@ -289,7 +290,7 @@ async def fallback_proxy_image(url: str):
         
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            req = await client.get(target, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.pornhub.com/'})
+            req = await client.get(target, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.xvideos.com/'})
             return StreamingResponse(
                 (chunk async for chunk in req.aiter_bytes()),
                 status_code=req.status_code,
