@@ -179,7 +179,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Cookie': 'has_accepted_cookie=1; age_verified=1; bs=1;',
+        'Cookie': 'has_accepted_cookie=1; age_verified=1; bs=1; platform=pc;',
         'Referer': 'https://www.pornhub.com/'
     }
 
@@ -195,6 +195,12 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             resp = await client.get(search_url, headers=headers)
             
+        # Fallback query attempt if direct search returns empty or blocked status
+        if resp.status_code != 200 or len(resp.content) < 1000:
+            alt_url = f"https://www.pornhub.com/video/search?search={quote(q)}"
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as fallback_client:
+                resp = await fallback_client.get(alt_url, headers=headers)
+
         if resp.status_code != 200:
             return JSONResponse([])
 
@@ -261,10 +267,10 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                 if len(videos) >= 24:
                     break
         else:
-            # Flexible multi-selector layout matching Pornhub's dynamic container elements
+            # Bulletproof multi-selector parser matching both cached and real-time Pornhub DOM variations
             items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or contains(@class, "videoBox")]')
             if not items:
-                items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "nf-videos")]//li | //div[@class="wrap"]//li | //section[contains(@class, "videos")]//li')
+                items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "nf-videos")]//li | //div[@class="wrap"]//li | //section[contains(@class, "videos")]//li | //div[contains(@class, "pcVideoListItem")]')
 
             for item in items:
                 vkey = item.get("data-video-vkey") or next(iter(item.xpath('.//@data-video-vkey')), None)
