@@ -137,7 +137,6 @@ def extract_with_ytdlp(url: str) -> dict:
 async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub"):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
         'Cookie': 'has_accepted_cookie=1; age_verified=1;',
         'Referer': 'https://www.xvideos.com/' if provider == "xvideos" else 'https://www.pornhub.com/'
     }
@@ -157,9 +156,9 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         if resp.status_code != 200:
             return JSONResponse([])
 
-        # Ensure explicit utf-8 decoding to properly handle Persian, Arabic, and Hindi titles withoutMojibake
+        # Ensure correct decoding for UTF-8 character sets (Persian/Arabic/Hindi)
         try:
-            html_content = resp.content.decode('utf-8', errors='replace')
+            html_content = resp.content.decode('utf-8')
         except Exception:
             html_content = resp.text
 
@@ -201,15 +200,17 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 
                 vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
                 
-                title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text() | .//a/@title')
-                title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
-
-                # Sanitize slug creation safely using a fallback identifier if non-ASCII url path characters break
                 clean_href = href.rstrip('/')
-                if clean_href.endswith('_') or clean_href.endswith('/_') or len(clean_href.split('/')) < 3:
-                    clean_href = f"/{vid_id}/video_stream"
+                if clean_href.endswith('_') or clean_href.endswith('/_'):
+                    title_fallback_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text()')
+                    fallback_text = title_fallback_elems[0].strip() if title_fallback_elems else "video"
+                    slug_candidate = "".join([c if c.isalnum() else "_" for c in fallback_text.lower()]).strip('_')
+                    clean_href = f"/{vid_id}/{slug_candidate[:40]}"
 
                 full_url = f"https://www.xvideos.com{clean_href}" if clean_href.startswith('/') else clean_href
+
+                title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text() | .//a/@title')
+                title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
 
                 raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
                 thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
