@@ -29,6 +29,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def search_pornhub_with_ytdlp(q: str, page: int):
+    """Primary handler for Pornhub searches relying on yt-dlp to bypass Cloudflare"""
+    ydl_opts = {
+        'quiet': True,
+        'extract_flat': True,
+        'nocheckcertificate': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Referer': 'https://www.pornhub.com/',
+            'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
+        }
+    }
+    videos = []
+    try:
+        search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(search_url, download=False)
+            if not info: return videos
+            
+            entries = info.get('entries', [])
+            for entry in entries:
+                if not entry: continue
+                
+                vkey = entry.get('id')
+                if not vkey and entry.get('url') and 'viewkey=' in entry.get('url'):
+                    vkey = entry.get('url').split('viewkey=')[1].split('&')[0]
+                if not vkey: continue
+                
+                title = entry.get('title', 'Unknown Video')
+                thumb = entry.get('thumbnail')
+                if not thumb and entry.get('thumbnails'):
+                    thumb = entry.get('thumbnails')[0].get('url', '')
+                    
+                videos.append({
+                    "vkey": vkey,
+                    "title": title,
+                    "thumbnail": thumb or "",
+                    "url": f"https://www.pornhub.com/view_video.php?viewkey={vkey}",
+                    "provider": "pornhub"
+                })
+                
+                if len(videos) >= 24:
+                    break
+    except Exception as e:
+        logger.error(f"yt-dlp phsearch error: {e}")
+    return videos
+
 def parse_metadata_fallback(url: str, provider: str) -> dict:
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -170,6 +217,15 @@ def extract_with_ytdlp(url: str) -> dict:
 
 @app.get("/api/explore")
 async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub"):
+    loop = asyncio.get_running_loop()
+    
+    # 1. Primary Handler: Use robust yt-dlp to bypass Cloudflare constraints for Pornhub
+    if provider == "pornhub":
+        videos = await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page)
+        if videos and len(videos) > 0:
+            return JSONResponse(videos)
+
+    # 2. Secondary Handler: High-Speed httpx parser for XNXX/XVideos, or Pornhub fallback
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
@@ -188,10 +244,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
     try:
         async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
             resp = await client.get(search_url, headers=headers)
-            
-            if resp.status_code != 200 or len(resp.content) < 1000:
-                fallback_url = f"https://www.pornhub.com/video/search?search={quote(q)}"
-                resp = await client.get(fallback_url, headers=headers)
 
             if resp.status_code != 200:
                 return JSONResponse([])
@@ -338,4 +390,4 @@ async def fallback_proxy_image(url: str):
 
 @app.get("/")
 def health():
-    return {"status": "Online", "engine": "Fast Edge Extraction Engine"}
+    return {"status": "Online", "engine": "yt-dlp Core + Metadata Engine"}
