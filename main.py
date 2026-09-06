@@ -16,10 +16,7 @@ from cachetools import TTLCache
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# Cache up to 2000 extractions for 2 hours to handle high traffic spikes
 extraction_cache = TTLCache(maxsize=2000, ttl=7200)
-
-# Limit ThreadPool to prevent OOM/CPU starvation under 1000+ concurrent loads
 thread_pool = ThreadPoolExecutor(max_workers=50)
 
 app = FastAPI(title="Media Extraction Engine")
@@ -32,7 +29,6 @@ app.add_middleware(
 )
 
 def extract_with_ytdlp(url: str) -> dict:
-    """Blocking yt-dlp extraction logic with 5 RETRIES. STRICTLY HLS."""
     if url in extraction_cache:
         return extraction_cache[url]
 
@@ -40,7 +36,7 @@ def extract_with_ytdlp(url: str) -> dict:
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
-        'format': 'all',  # Fetch all formats to parse qualities
+        'format': 'all',
         'nocheckcertificate': True,
     }
 
@@ -54,9 +50,12 @@ def extract_with_ytdlp(url: str) -> dict:
 
             title = info.get('title', 'Unknown Video')
             thumbnail = info.get('thumbnail', '')
-            duration = info.get('duration', 0) # EXPLICITLY FETCH DURATION TO FIX 0:00 BUG
+            duration = info.get('duration', 0)
             
-            # Aggregate all thumbnails
+            # Extract upload date & view count metrics
+            upload_date = info.get('upload_date', '') # Format: YYYYMMDD
+            view_count = info.get('view_count', 0)
+
             thumbnails = [t['url'] for t in info.get('thumbnails', []) if 'url' in t]
             if thumbnail and thumbnail not in thumbnails:
                 thumbnails.insert(0, thumbnail)
@@ -64,7 +63,6 @@ def extract_with_ytdlp(url: str) -> dict:
             qualities = []
             seen_qualities = set()
 
-            # Parse strictly HLS formats
             for f in info.get('formats', []):
                 height = f.get('height')
                 if not height:
@@ -75,7 +73,6 @@ def extract_with_ytdlp(url: str) -> dict:
                 protocol = f.get('protocol', '')
                 ext = f.get('ext', '')
 
-                # STRICT FILTER: Only allow m3u8 / HLS streams
                 if 'm3u8' not in protocol and ext != 'm3u8':
                     continue
 
@@ -87,13 +84,12 @@ def extract_with_ytdlp(url: str) -> dict:
                         "type": "hls"
                     })
 
-            # Sort qualities highest to lowest
             qualities.sort(key=lambda x: int(x['quality'].replace('p', '')), reverse=True)
 
             if not qualities:
                 last_error = "No valid HLS streams found"
                 if attempt < max_retries - 1:
-                    time.sleep(1.5)  # Wait before retry
+                    time.sleep(1.5)
                     continue
                 return {"status": "error", "error": last_error, "url": url}
 
@@ -102,7 +98,9 @@ def extract_with_ytdlp(url: str) -> dict:
                 "title": title,
                 "thumbnail": thumbnail or (thumbnails[0] if thumbnails else ""),
                 "thumbnails": thumbnails,
-                "duration": duration, # ADDED DURATION
+                "duration": duration,
+                "upload_date": upload_date,
+                "view_count": view_count,
                 "streams": {"qualities": qualities},
                 "url": url,
                 "provider": "pornhub"
@@ -135,7 +133,6 @@ async def explore(q: str = "brazzers", page: int = 1):
     }
     
     try:
-        # Use httpx for asynchronous, non-blocking requests
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             resp = await client.get(search_url, headers=headers)
             
@@ -157,7 +154,6 @@ async def explore(q: str = "brazzers", page: int = 1):
             raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@src')
             thumb = raw_thumbs[0] if raw_thumbs else ""
             
-            # Skip placeholders
             if not thumb or "data:image" in thumb or "blank" in thumb:
                 continue
 
@@ -185,13 +181,10 @@ async def extract_endpoint(url: str):
         return JSONResponse({"status": "error", "error": "Missing URL"})
     
     target_url = unquote(url)
-    
-    # Ensure it's a full URL if only viewkey is passed
     if "viewkey=" not in target_url and len(target_url) in [13, 15, 16] and "." not in target_url:
          target_url = f"https://www.pornhub.com/view_video.php?viewkey={target_url}"
          
     loop = asyncio.get_running_loop()
-    # Offload the blocking yt-dlp task to the ThreadPoolExecutor
     res = await loop.run_in_executor(thread_pool, extract_with_ytdlp, target_url)
     return JSONResponse(res)
 
@@ -218,4 +211,4 @@ async def fallback_proxy_image(url: str):
 
 @app.get("/")
 def health():
-    return {"status": "Online", "engine": "yt-dlp Core (Strict HLS) + 5 Retries", "concurrency": "async-threadpool"}
+    return {"status": "Online", "engine": "yt-dlp Core (Strict HLS) + Metadata Engine"}
