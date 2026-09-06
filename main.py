@@ -38,6 +38,10 @@ def extract_with_ytdlp(url: str) -> dict:
         'extract_flat': False,
         'format': 'all',
         'nocheckcertificate': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Referer': 'https://www.pornhub.com/'
+        }
     }
 
     max_retries = 5
@@ -132,8 +136,9 @@ def extract_with_ytdlp(url: str) -> dict:
 @app.get("/api/explore")
 async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub"):
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Cookie': 'has_accepted_cookie=1; age_verified=1;'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Cookie': 'has_accepted_cookie=1; age_verified=1;',
+        'Referer': 'https://www.pornhub.com/'
     }
 
     if provider == "xnxx":
@@ -204,7 +209,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                 if len(videos) >= 24:
                     break
         else:
-            # Updated Pornhub robust card parsing
             items = tree.xpath('//li[contains(@class, "js-pop videoblock") or contains(@class, "pcVideoListItem")]')
             if not items:
                 items = tree.xpath('//ul[@id="videoSearchResult"]//li')
@@ -212,7 +216,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
             for item in items:
                 vkey = item.get("data-video-vkey") or next(iter(item.xpath('.//@data-video-vkey')), None)
                 if not vkey:
-                    # Fallback pattern extraction from href links if attribute is missing
                     hrefs = item.xpath('.//a[contains(@href, "viewkey=")]/@href')
                     for h in hrefs:
                         if "viewkey=" in h:
@@ -273,7 +276,7 @@ async def fallback_proxy_image(url: str):
         
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            req = await client.get(target, headers={'User-Agent': 'Mozilla/5.0'})
+            req = await client.get(target, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.pornhub.com/'})
             return StreamingResponse(
                 (chunk async for chunk in req.aiter_bytes()),
                 status_code=req.status_code,
