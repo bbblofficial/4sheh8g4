@@ -37,7 +37,7 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
     }
     try:
         import requests
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = requests.get(url, headers=headers, timeout=5)
         if resp.status_code == 200:
             html_text = resp.text
             view_count = 0
@@ -78,7 +78,7 @@ def extract_with_ytdlp(url: str) -> dict:
         }
     }
 
-    max_retries = 5
+    max_retries = 2
     last_error = "Unknown Error"
 
     provider = "pornhub"
@@ -139,7 +139,7 @@ def extract_with_ytdlp(url: str) -> dict:
             if not qualities:
                 last_error = "No valid streams found"
                 if attempt < max_retries - 1:
-                    time.sleep(1.5)
+                    time.sleep(0.5)
                     continue
                 return {"status": "error", "error": last_error, "url": url}
 
@@ -159,19 +159,13 @@ def extract_with_ytdlp(url: str) -> dict:
             extraction_cache[url] = result
             return result
 
-        except yt_dlp.utils.DownloadError as e:
-            last_error = f"Download error: {str(e)}"
-            if attempt < max_retries - 1:
-                time.sleep(1.5)
-                continue
         except Exception as e:
             last_error = str(e)
-            logger.error(f"yt-dlp extraction failed: {e}")
             if attempt < max_retries - 1:
-                time.sleep(1.5)
+                time.sleep(0.5)
                 continue
 
-    return {"status": "error", "error": f"Failed after 5 attempts. Last error: {last_error}", "url": url}
+    return {"status": "error", "error": f"Failed: {last_error}", "url": url}
 
 
 @app.get("/api/explore")
@@ -189,16 +183,13 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         p_val = page - 1 if page > 1 else 0
         search_url = f"https://www.xvideos.com/?k={quote(q)}" if p_val == 0 else f"https://www.xvideos.com/?k={quote(q)}&p={p_val}"
     else:
-        # Use exact requested search path with support for page parameter
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}" if page <= 1 else f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
     
     try:
-        videos = []
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
             resp = await client.get(search_url, headers=headers)
             
-            # Fallback retry without page parameters if main search page yields empty/blocked protection payload
-            if resp.status_code != 200 or len(resp.content) < 1500:
+            if resp.status_code != 200 or len(resp.content) < 1000:
                 fallback_url = f"https://www.pornhub.com/video/search?search={quote(q)}"
                 resp = await client.get(fallback_url, headers=headers)
 
@@ -211,6 +202,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                 html_content = resp.text
 
             tree = html.fromstring(html_content)
+            videos = []
 
             if provider == "xnxx":
                 items = tree.xpath('//div[contains(@class, "mozaique")]//div[contains(@class, "thumb-block")]')
@@ -219,20 +211,16 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     href = next((l for l in link_elems if l and ('/video-' in l or '/video.' in l)), None)
                     if not href:
                         continue
-                    
                     vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
                     full_url = f"https://www.xnxx.com{href}" if href.startswith('/') else href
-
                     title_elems = item.xpath('.//div[@class="thumb-under"]//a/@title | .//div[@class="thumb-under"]//a/text() | .//a/@title')
                     title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
-
                     raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
                     thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
                     if not thumb and raw_thumbs:
                         thumb = raw_thumbs[0]
                     if not thumb:
                         continue
-
                     videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xnxx"})
                     if len(videos) >= 24:
                         break
@@ -244,46 +232,33 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     href = next((l for l in link_elems if l and ('/video.' in l or '/video-' in l)), None)
                     if not href:
                         continue
-
                     vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
-                    
                     title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text() | .//a/@title')
                     title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
-
                     clean_href = href.rstrip('/')
                     if clean_href.endswith('_') or clean_href.endswith('/_') or len(clean_href.split('/')) < 3:
                         clean_href = f"/{vid_id}/video_stream"
-
                     full_url = f"https://www.xvideos.com{clean_href}" if clean_href.startswith('/') else clean_href
-
                     raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
                     thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
                     if not thumb and raw_thumbs:
                         thumb = raw_thumbs[0]
                     if not thumb:
                         continue
-
                     videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xvideos"})
                     if len(videos) >= 24:
                         break
             else:
-                # Comprehensive multi-selector DOM extraction to guarantee card population on random empty arrays
                 items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or contains(@class, "videoBox")]')
                 if not items:
-                    items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "nf-videos")]//li | //div[@class="wrap"]//li | //section[contains(@class, "videos")]//li | //div[contains(@class, "pcVideoListItem")]')
+                    items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "nf-videos")]//li | //div[@class="wrap"]//li | //section[contains(@class, "videos")]//li')
 
                 for item in items:
                     vkey = item.get("data-video-vkey") or next(iter(item.xpath('.//@data-video-vkey')), None)
                     if not vkey:
                         hrefs = item.xpath('.//a[contains(@href, "viewkey=")]/@href | .//a[contains(@href, "/view_video.php")]/@href | .//a[contains(@href, "/video/")]/@href | .//a/@href')
                         for h in hrefs:
-                            if "viewkey=" in h:
-                                try:
-                                    vkey = h.split("viewkey=")[1].split("&")[0]
-                                    break
-                                except Exception:
-                                    pass
-                            elif "/view_video.php?" in h:
+                            if "viewkey=" in h or "/view_video.php?" in h:
                                 try:
                                     vkey = h.split("viewkey=")[1].split("&")[0]
                                     break
@@ -322,7 +297,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     if len(videos) >= 24:
                         break
 
-        return JSONResponse(videos)
+            return JSONResponse(videos)
 
     except Exception as e:
         logger.error(f"Explore error: {e}")
@@ -333,12 +308,10 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 async def extract_endpoint(url: str):
     if not url:
         return JSONResponse({"status": "error", "error": "Missing URL"})
-    
     target_url = unquote(url)
-    if "viewkey=" not in target_url and "xnxx.com" not in target_url and "xvideos.com" not in target_url:
+    if "viewkey=" not in target_url and "xnxx.com" not in target_URL and "xvideos.com" not in target_url:
         if len(target_url) in [13, 15, 16] and "." not in target_url:
              target_url = f"https://www.pornhub.com/view_video.php?viewkey={target_url}"
-         
     loop = asyncio.get_running_loop()
     res = await loop.run_in_executor(thread_pool, extract_with_ytdlp, target_url)
     return JSONResponse(res)
@@ -349,9 +322,8 @@ async def fallback_proxy_image(url: str):
     target = unquote(url).strip()
     if target.startswith('//'):
         target = "https:" + target
-        
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
             req = await client.get(target, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.pornhub.com/'})
             return StreamingResponse(
                 (chunk async for chunk in req.aiter_bytes()),
@@ -364,18 +336,6 @@ async def fallback_proxy_image(url: str):
     except Exception:
         return Response(status_code=404)
 
-@app.get("/api/test-ph")
-async def test_ph_search(q: str = "brazzers"):
-    test_url = f"https://www.pornhub.com/video/search?search={quote(q)}"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Cookie': 'has_accepted_cookie=1; age_verified=1; bs=1;',
-        'Referer': 'https://www.pornhub.com/'
-    }
-    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-        resp = await client.get(test_url, headers=headers)
-        return {"status_code": resp.status_code, "content_length": len(resp.content), "sample_html": resp.text[:500]}
-
 @app.get("/")
 def health():
-    return {"status": "Online", "engine": "yt-dlp Multi-Hub Core (Pornhub, XNXX, XVideos) + Metadata Engine"}
+    return {"status": "Online", "engine": "Fast Edge Extraction Engine"}
