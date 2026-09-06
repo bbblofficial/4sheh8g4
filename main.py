@@ -261,7 +261,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                 if len(videos) >= 24:
                     break
         else:
-            # Bulletproof dynamic multi-selector configuration matching current Pornhub layout
+            # Bulletproof dynamic multi-selector strategy matching current Pornhub layout structures
             items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop")]')
             if not items:
                 items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "nf-videos")]//li | //div[contains(@class, "wrap")]//li[contains(@class, "videoblock")]')
@@ -354,7 +354,6 @@ async def fallback_proxy_image(url: str):
 
 @app.get("/api/test-ph")
 async def test_ph_search(q: str = "brazzers"):
-    """Dedicated testing endpoint for checking Pornhub DOM extraction directly."""
     test_url = f"https://www.pornhub.com/video/search?search={quote(q)}"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
