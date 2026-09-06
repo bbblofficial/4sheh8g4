@@ -2,6 +2,7 @@ import os
 import time
 import asyncio
 import logging
+import re
 from urllib.parse import quote, unquote
 from concurrent.futures import ThreadPoolExecutor
 
@@ -27,6 +28,39 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def parse_metadata_fallback(url: str, provider: str) -> dict:
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cookie': 'has_accepted_cookie=1; age_verified=1;'
+    }
+    try:
+        import requests
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            html_text = resp.text
+            view_count = 0
+            upload_date = ""
+
+            view_match = re.search(r'([\d,\.]+)\s*(?:Views|views|Vistas|M views|k views)', html_text)
+            if view_match:
+                raw_views = view_match.group(1).replace(',', '').replace('.', '')
+                if 'k' in view_match.group(0).lower():
+                    view_count = int(float(raw_views.replace('k', '')) * 1000)
+                elif 'm' in view_match.group(0).lower():
+                    view_count = int(float(raw_views.replace('m', '')) * 1000000)
+                else:
+                    view_count = int(raw_views) if raw_views.isdigit() else 0
+
+            date_match = re.search(r'(\d{4}-\d{2}-\d{2})|(\d{1,2}\s+[a-zA-Z]+\s+\d{4})', html_text)
+            if date_match:
+                upload_date = date_match.group(0)
+
+            return {"view_count": view_count, "upload_date": upload_date}
+    except Exception as e:
+        logger.error(f"Metadata fallback scrape error: {e}")
+    return {"view_count": 0, "upload_date": ""}
 
 def extract_with_ytdlp(url: str) -> dict:
     if url in extraction_cache:
@@ -64,6 +98,13 @@ def extract_with_ytdlp(url: str) -> dict:
             
             upload_date = info.get('upload_date', '') 
             view_count = info.get('view_count', 0)
+
+            if not view_count or not upload_date:
+                extra_meta = parse_metadata_fallback(url, provider)
+                if not view_count:
+                    view_count = extra_meta.get("view_count", 0)
+                if not upload_date:
+                    upload_date = extra_meta.get("upload_date", "")
 
             thumbnails = [t['url'] for t in info.get('thumbnails', []) if 'url' in t]
             if thumbnail and thumbnail not in thumbnails:
@@ -137,8 +178,9 @@ def extract_with_ytdlp(url: str) -> dict:
 async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub"):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Cookie': 'has_accepted_cookie=1; age_verified=1;',
-        'Referer': 'https://www.xvideos.com/' if provider == "xvideos" else 'https://www.pornhub.com/'
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cookie': 'has_accepted_cookie=1; age_verified=1; bs=1;',
+        'Referer': 'https://www.pornhub.com/'
     }
 
     if provider == "xnxx":
@@ -156,9 +198,8 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         if resp.status_code != 200:
             return JSONResponse([])
 
-        # Ensure correct decoding for UTF-8 character sets (Persian/Arabic/Hindi)
         try:
-            html_content = resp.content.decode('utf-8')
+            html_content = resp.content.decode('utf-8', errors='replace')
         except Exception:
             html_content = resp.text
 
@@ -200,17 +241,14 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 
                 vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
                 
-                clean_href = href.rstrip('/')
-                if clean_href.endswith('_') or clean_href.endswith('/_'):
-                    title_fallback_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text()')
-                    fallback_text = title_fallback_elems[0].strip() if title_fallback_elems else "video"
-                    slug_candidate = "".join([c if c.isalnum() else "_" for c in fallback_text.lower()]).strip('_')
-                    clean_href = f"/{vid_id}/{slug_candidate[:40]}"
-
-                full_url = f"https://www.xvideos.com{clean_href}" if clean_href.startswith('/') else clean_href
-
                 title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text() | .//a/@title')
                 title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
+
+                clean_href = href.rstrip('/')
+                if clean_href.endswith('_') or clean_href.endswith('/_') or len(clean_href.split('/')) < 3:
+                    clean_href = f"/{vid_id}/video_stream"
+
+                full_url = f"https://www.xvideos.com{clean_href}" if clean_href.startswith('/') else clean_href
 
                 raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
                 thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
@@ -223,26 +261,38 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                 if len(videos) >= 24:
                     break
         else:
-            items = tree.xpath('//li[contains(@class, "js-pop videoblock") or contains(@class, "pcVideoListItem")]')
+            # Bulletproof multi-selector approach for Pornhub list containers and mobile/desktop DOM structures
+            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop")]')
             if not items:
-                items = tree.xpath('//ul[@id="videoSearchResult"]//li')
+                items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "nf-videos")]//li')
 
             for item in items:
                 vkey = item.get("data-video-vkey") or next(iter(item.xpath('.//@data-video-vkey')), None)
                 if not vkey:
-                    hrefs = item.xpath('.//a[contains(@href, "viewkey=")]/@href')
+                    hrefs = item.xpath('.//a[contains(@href, "viewkey=")]/@href | .//a[contains(@href, "/video/")]/@href | .//a/@href')
                     for h in hrefs:
                         if "viewkey=" in h:
-                            vkey = h.split("viewkey=")[1].split("&")[0]
-                            break
+                            try:
+                                vkey = h.split("viewkey=")[1].split("&")[0]
+                                break
+                            except Exception:
+                                pass
+                        elif "/video/" in h:
+                            try:
+                                parts = [p for p in h.split('/') if p]
+                                if parts:
+                                    vkey = parts[-1]
+                                    break
+                            except Exception:
+                                pass
                 if not vkey:
                     continue
 
-                title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title')
+                title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title | .//span[@class="title"]/text()')
                 title = title_elem[0].strip() if title_elem else "Unknown Video"
 
-                raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@src')
-                thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t), "")
+                raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@src | .//img/@data-src')
+                thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "transparent" not in t), "")
                 if not thumb and raw_thumbs:
                     thumb = raw_thumbs[0]
 
@@ -290,7 +340,7 @@ async def fallback_proxy_image(url: str):
         
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            req = await client.get(target, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.xvideos.com/'})
+            req = await client.get(target, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.pornhub.com/'})
             return StreamingResponse(
                 (chunk async for chunk in req.aiter_bytes()),
                 status_code=req.status_code,
