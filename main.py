@@ -261,10 +261,10 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                 if len(videos) >= 24:
                     break
         else:
-            # Bulletproof multi-selector approach for Pornhub list containers and mobile/desktop DOM structures
+            # Bulletproof dynamic multi-selector configuration matching current Pornhub layout
             items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop")]')
             if not items:
-                items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "nf-videos")]//li')
+                items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "nf-videos")]//li | //div[contains(@class, "wrap")]//li[contains(@class, "videoblock")]')
 
             for item in items:
                 vkey = item.get("data-video-vkey") or next(iter(item.xpath('.//@data-video-vkey')), None)
@@ -288,7 +288,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                 if not vkey:
                     continue
 
-                title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title | .//span[@class="title"]/text()')
+                title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title | .//span[@class="title"]/text() | .//div[@class="title"]//a/text()')
                 title = title_elem[0].strip() if title_elem else "Unknown Video"
 
                 raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@src | .//img/@data-src')
@@ -351,6 +351,19 @@ async def fallback_proxy_image(url: str):
             )
     except Exception:
         return Response(status_code=404)
+
+@app.get("/api/test-ph")
+async def test_ph_search(q: str = "brazzers"):
+    """Dedicated testing endpoint for checking Pornhub DOM extraction directly."""
+    test_url = f"https://www.pornhub.com/video/search?search={quote(q)}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Cookie': 'has_accepted_cookie=1; age_verified=1; bs=1;',
+        'Referer': 'https://www.pornhub.com/'
+    }
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        resp = await client.get(test_url, headers=headers)
+        return {"status_code": resp.status_code, "content_length": len(resp.content), "sample_html": resp.text[:500]}
 
 @app.get("/")
 def health():
