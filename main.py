@@ -193,10 +193,23 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     continue
 
                 vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
-                full_url = f"https://www.xvideos.com{href}" if href.startswith('/') else href
+                
+                clean_href = href.rstrip('/')
+                if clean_href.endswith('_') or clean_href.endswith('/_'):
+                    title_fallback_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text()')
+                    fallback_text = title_fallback_elems[0].strip() if title_fallback_elems else "video"
+                    slug_candidate = "".join([c if c.isalnum() else "_" for c in fallback_text.lower()]).strip('_')
+                    clean_href = f"/{vid_id}/{slug_candidate[:40]}"
+
+                full_url = f"https://www.xvideos.com{clean_href}" if clean_href.startswith('/') else clean_href
 
                 title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text() | .//a/@title')
                 title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
+
+                try:
+                    title = title.encode('utf-8', 'ignore').decode('utf-8')
+                except Exception:
+                    pass
 
                 raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
                 thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
