@@ -261,17 +261,23 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                 if len(videos) >= 24:
                     break
         else:
-            # Bulletproof dynamic multi-selector strategy matching current Pornhub layout structures
-            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop")]')
+            # Flexible multi-selector layout matching Pornhub's dynamic container elements
+            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or contains(@class, "videoBox")]')
             if not items:
-                items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "nf-videos")]//li | //div[contains(@class, "wrap")]//li[contains(@class, "videoblock")]')
+                items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "nf-videos")]//li | //div[@class="wrap"]//li | //section[contains(@class, "videos")]//li')
 
             for item in items:
                 vkey = item.get("data-video-vkey") or next(iter(item.xpath('.//@data-video-vkey')), None)
                 if not vkey:
-                    hrefs = item.xpath('.//a[contains(@href, "viewkey=")]/@href | .//a[contains(@href, "/video/")]/@href | .//a/@href')
+                    hrefs = item.xpath('.//a[contains(@href, "viewkey=")]/@href | .//a[contains(@href, "/view_video.php")]/@href | .//a[contains(@href, "/video/")]/@href | .//a/@href')
                     for h in hrefs:
                         if "viewkey=" in h:
+                            try:
+                                vkey = h.split("viewkey=")[1].split("&")[0]
+                                break
+                            except Exception:
+                                pass
+                        elif "/view_video.php?" in h:
                             try:
                                 vkey = h.split("viewkey=")[1].split("&")[0]
                                 break
@@ -288,10 +294,10 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                 if not vkey:
                     continue
 
-                title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title | .//span[@class="title"]/text() | .//div[@class="title"]//a/text()')
-                title = title_elem[0].strip() if title_elem else "Unknown Video"
+                title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title | .//span[@class="title"]/text() | .//div[@class="title"]//a/text() | .//a//text()')
+                title = next((t.strip() for t in title_elem if t and len(t.strip()) > 3), "Unknown Video")
 
-                raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@src | .//img/@data-src')
+                raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@src | .//img/@data-src | .//img/@data-lazy-src')
                 thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "transparent" not in t), "")
                 if not thumb and raw_thumbs:
                     thumb = raw_thumbs[0]
