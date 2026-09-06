@@ -30,13 +30,13 @@ app.add_middleware(
 )
 
 def search_pornhub_with_ytdlp(q: str, page: int):
-    """Fallback handler for Pornhub searches relying on yt-dlp"""
+    """Primary handler for Pornhub searches relying on yt-dlp to bypass Cloudflare"""
     ydl_opts = {
         'quiet': True,
         'extract_flat': True,
         'nocheckcertificate': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
             'Referer': 'https://www.pornhub.com/',
             'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
         }
@@ -78,7 +78,7 @@ def search_pornhub_with_ytdlp(q: str, page: int):
 
 def parse_metadata_fallback(url: str, provider: str) -> dict:
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cookie': 'has_accepted_cookie=1; age_verified=1;'
     }
@@ -117,15 +117,18 @@ def extract_with_ytdlp(url: str) -> dict:
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
-        'format': 'all',
+        'format': 'bestvideo+bestaudio/best',
         'nocheckcertificate': True,
+        'age_limit': 21,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Referer': 'https://www.pornhub.com/'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Referer': 'https://www.pornhub.com/',
+            'Origin': 'https://www.pornhub.com',
+            'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
         }
     }
 
-    max_retries = 2
+    max_retries = 3
     last_error = "Unknown Error"
 
     provider = "pornhub"
@@ -142,7 +145,6 @@ def extract_with_ytdlp(url: str) -> dict:
             title = info.get('title', 'Unknown Video')
             thumbnail = info.get('thumbnail', '')
             duration = info.get('duration', 0)
-            
             upload_date = info.get('upload_date', '') 
             view_count = info.get('view_count', 0)
 
@@ -162,16 +164,13 @@ def extract_with_ytdlp(url: str) -> dict:
 
             for f in info.get('formats', []):
                 height = f.get('height')
-                if not height:
+                f_url = f.get('url', '')
+                if not height or not f_url:
                     continue
                 
                 q_label = f"{height}p"
-                f_url = f.get('url', '')
                 protocol = f.get('protocol', '')
                 ext = f.get('ext', '')
-
-                if 'm3u8' not in protocol and ext != 'm3u8' and 'http' not in protocol:
-                    continue
 
                 if q_label not in seen_qualities:
                     seen_qualities.add(q_label)
@@ -186,7 +185,7 @@ def extract_with_ytdlp(url: str) -> dict:
             if not qualities:
                 last_error = "No valid streams found"
                 if attempt < max_retries - 1:
-                    time.sleep(0.5)
+                    time.sleep(1.0)
                     continue
                 return {"status": "error", "error": last_error, "url": url}
 
@@ -209,16 +208,16 @@ def extract_with_ytdlp(url: str) -> dict:
         except Exception as e:
             last_error = str(e)
             if attempt < max_retries - 1:
-                time.sleep(0.5)
+                time.sleep(1.0)
                 continue
 
-    return {"status": "error", "error": f"Failed: {last_error}", "url": url}
+    return {"status": "error", "error": f"Failed after retries: {last_error}", "url": url}
 
 
 @app.get("/api/explore")
 async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub"):
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;',
         'Referer': 'https://www.pornhub.com/'
@@ -237,7 +236,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
             resp = await client.get(search_url, headers=headers)
 
             if resp.status_code != 200:
-                # If HTTPX is blocked, fallback to yt-dlp
                 if provider == "pornhub":
                     loop = asyncio.get_running_loop()
                     return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
@@ -325,7 +323,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title')
                     title = next((t.strip() for t in title_elem if t and len(t.strip()) > 3), "Unknown Video")
 
-                    # Advanced thumbnail extraction for Pornhub specifically to ignore blanks
                     raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@data-src | .//img/@src')
                     thumb = ""
                     for t in raw_thumbs:
@@ -344,7 +341,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     if len(videos) >= 24:
                         break
                 
-                # If HTTPX parsing resulted in an empty array because of DOM changes, fallback to yt-dlp
                 if len(videos) == 0:
                     loop = asyncio.get_running_loop()
                     return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
