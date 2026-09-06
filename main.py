@@ -30,7 +30,7 @@ app.add_middleware(
 )
 
 def search_pornhub_with_ytdlp(q: str, page: int):
-    """Primary handler for Pornhub searches relying on yt-dlp to bypass Cloudflare"""
+    """Fallback handler for Pornhub searches relying on yt-dlp"""
     ydl_opts = {
         'quiet': True,
         'extract_flat': True,
@@ -58,14 +58,14 @@ def search_pornhub_with_ytdlp(q: str, page: int):
                 if not vkey: continue
                 
                 title = entry.get('title', 'Unknown Video')
-                thumb = entry.get('thumbnail')
+                thumb = entry.get('thumbnail', '')
                 if not thumb and entry.get('thumbnails'):
                     thumb = entry.get('thumbnails')[0].get('url', '')
                     
                 videos.append({
                     "vkey": vkey,
                     "title": title,
-                    "thumbnail": thumb or "",
+                    "thumbnail": thumb,
                     "url": f"https://www.pornhub.com/view_video.php?viewkey={vkey}",
                     "provider": "pornhub"
                 })
@@ -217,19 +217,10 @@ def extract_with_ytdlp(url: str) -> dict:
 
 @app.get("/api/explore")
 async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub"):
-    loop = asyncio.get_running_loop()
-    
-    # 1. Primary Handler: Use robust yt-dlp to bypass Cloudflare constraints for Pornhub
-    if provider == "pornhub":
-        videos = await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page)
-        if videos and len(videos) > 0:
-            return JSONResponse(videos)
-
-    # 2. Secondary Handler: High-Speed httpx parser for XNXX/XVideos, or Pornhub fallback
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Cookie': 'has_accepted_cookie=1; age_verified=1; bs=1; platform=pc;',
+        'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;',
         'Referer': 'https://www.pornhub.com/'
     }
 
@@ -239,13 +230,17 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         p_val = page - 1 if page > 1 else 0
         search_url = f"https://www.xvideos.com/?k={quote(q)}" if p_val == 0 else f"https://www.xvideos.com/?k={quote(q)}&p={p_val}"
     else:
-        search_url = f"https://www.pornhub.com/video/search?search={quote(q)}" if page <= 1 else f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
+        search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
     
     try:
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
             resp = await client.get(search_url, headers=headers)
 
             if resp.status_code != 200:
+                # If HTTPX is blocked, fallback to yt-dlp
+                if provider == "pornhub":
+                    loop = asyncio.get_running_loop()
+                    return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
                 return JSONResponse([])
 
             try:
@@ -303,12 +298,12 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
             else:
                 items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or contains(@class, "videoBox")]')
                 if not items:
-                    items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "nf-videos")]//li | //div[@class="wrap"]//li | //section[contains(@class, "videos")]//li')
+                    items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li')
 
                 for item in items:
                     vkey = item.get("data-video-vkey") or next(iter(item.xpath('.//@data-video-vkey')), None)
                     if not vkey:
-                        hrefs = item.xpath('.//a[contains(@href, "viewkey=")]/@href | .//a[contains(@href, "/view_video.php")]/@href | .//a[contains(@href, "/video/")]/@href | .//a/@href')
+                        hrefs = item.xpath('.//a[contains(@href, "viewkey=")]/@href | .//a[contains(@href, "/view_video.php")]/@href | .//a[contains(@href, "/video/")]/@href')
                         for h in hrefs:
                             if "viewkey=" in h or "/view_video.php?" in h:
                                 try:
@@ -327,16 +322,16 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     if not vkey:
                         continue
 
-                    title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title | .//span[@class="title"]/text() | .//div[@class="title"]//a/text() | .//a//text()')
+                    title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title')
                     title = next((t.strip() for t in title_elem if t and len(t.strip()) > 3), "Unknown Video")
 
-                    raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@src | .//img/@data-src | .//img/@data-lazy-src')
-                    thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "transparent" not in t), "")
-                    if not thumb and raw_thumbs:
-                        thumb = raw_thumbs[0]
-
-                    if not thumb:
-                        continue
+                    # Advanced thumbnail extraction for Pornhub specifically to ignore blanks
+                    raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@data-src | .//img/@src')
+                    thumb = ""
+                    for t in raw_thumbs:
+                        if t and "data:image" not in t and "blank" not in t and "transparent" not in t and "data:auto" not in t:
+                            thumb = t
+                            break
 
                     videos.append({
                         "vkey": vkey,
@@ -348,6 +343,11 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 
                     if len(videos) >= 24:
                         break
+                
+                # If HTTPX parsing resulted in an empty array because of DOM changes, fallback to yt-dlp
+                if len(videos) == 0:
+                    loop = asyncio.get_running_loop()
+                    return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
 
             return JSONResponse(videos)
 
@@ -390,4 +390,4 @@ async def fallback_proxy_image(url: str):
 
 @app.get("/")
 def health():
-    return {"status": "Online", "engine": "yt-dlp Core + Metadata Engine"}
+    return {"status": "Online", "engine": "Fast Edge Extraction Engine"}
