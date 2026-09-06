@@ -2,6 +2,7 @@ import os
 import time
 import asyncio
 import logging
+import re
 from urllib.parse import quote, unquote
 from concurrent.futures import ThreadPoolExecutor
 
@@ -27,6 +28,42 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def parse_xvideos_or_xnxx_metadata(url: str) -> dict:
+    """Fallback custom HTML scraper to extract views, upload dates, and metadata for XVideos and XNXX when yt-dlp omits them."""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cookie': 'has_accepted_cookie=1; age_verified=1;'
+    }
+    try:
+        import requests
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            html_text = resp.text
+            view_count = 0
+            upload_date = ""
+
+            # Extract view count pattern (e.g. 4,226,338 views or 31k views)
+            view_match = re.search(r'([\d,\.]+)\s*(?:Views|views|Vistas|M views|k views)', html_text)
+            if view_match:
+                raw_views = view_match.group(1).replace(',', '').replace('.', '')
+                if 'k' in view_match.group(0).lower():
+                    view_count = int(float(raw_views.replace('k', '')) * 1000)
+                elif 'm' in view_match.group(0).lower():
+                    view_count = int(float(raw_views.replace('m', '')) * 1000000)
+                else:
+                    view_count = int(raw_views) if raw_views.isdigit() else 0
+
+            # Attempt to find date indicators
+            date_match = re.search(r'(\d{4}-\d{2}-\d{2})|(\d{1,2}\s+[a-zA-Z]+\s+\d{4})', html_text)
+            if date_match:
+                upload_date = date_match.group(0)
+
+            return {"view_count": view_count, "upload_date": upload_date}
+    except Exception as e:
+        logger.error(f"Metadata fallback scrape error: {e}")
+    return {"view_count": 0, "upload_date": ""}
 
 def extract_with_ytdlp(url: str) -> dict:
     if url in extraction_cache:
@@ -64,6 +101,14 @@ def extract_with_ytdlp(url: str) -> dict:
             
             upload_date = info.get('upload_date', '') 
             view_count = info.get('view_count', 0)
+
+            # If yt-dlp didn't populate views/upload_date for xvideos/xnxx, fallback to custom scraper parsing
+            if (not view_count or not upload_date) and provider in ["xvideos", "xnxx"]:
+                extra_meta = parse_xvideos_or_xnxx_metadata(url)
+                if not view_count:
+                    view_count = extra_meta.get("view_count", 0)
+                if not upload_date:
+                    upload_date = extra_meta.get("upload_date", "")
 
             thumbnails = [t['url'] for t in info.get('thumbnails', []) if 'url' in t]
             if thumbnail and thumbnail not in thumbnails:
@@ -157,7 +202,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         if resp.status_code != 200:
             return JSONResponse([])
 
-        # Ensure explicit utf-8 decoding to properly handle Persian, Arabic, and Hindi titles withoutMojibake
         try:
             html_content = resp.content.decode('utf-8', errors='replace')
         except Exception:
@@ -204,7 +248,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                 title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text() | .//a/@title')
                 title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
 
-                # Sanitize slug creation safely using a fallback identifier if non-ASCII url path characters break
                 clean_href = href.rstrip('/')
                 if clean_href.endswith('_') or clean_href.endswith('/_') or len(clean_href.split('/')) < 3:
                     clean_href = f"/{vid_id}/video_stream"
