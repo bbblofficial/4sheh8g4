@@ -3,7 +3,7 @@ import time
 import asyncio
 import logging
 import re
-from urllib.parse import quote, unquote
+from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, Request, Response
@@ -76,6 +76,9 @@ def search_pornhub_with_ytdlp(q: str, page: int):
     return videos
 
 def parse_metadata_fallback(url: str, provider: str) -> dict:
+    # Normalize URL to bypass language-specific domains like es.pornhub
+    url = re.sub(r'https?://[a-zA-Z0-9-]+\.pornhub\.com', 'https://www.pornhub.com', url)
+    
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
@@ -83,7 +86,7 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
     }
     try:
         import requests
-        resp = requests.get(url, headers=headers, timeout=5)
+        resp = requests.get(url, headers=headers, timeout=6)
         if resp.status_code == 200:
             html_text = resp.text
             view_count = 0
@@ -104,15 +107,15 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
             if date_match:
                 upload_date = date_match.group(0)
 
-            # EXTRACT PUBLIC THUMBNAIL (OG:IMAGE) TO FIX 403 ERROR
-            thumb_match = re.search(r'<meta property="og:image" content="([^"]+)"', html_text)
-            if not thumb_match:
-                thumb_match = re.search(r'<meta name="twitter:image" content="([^"]+)"', html_text)
-            if not thumb_match:
-                thumb_match = re.search(r'poster="([^"]+)"', html_text)
+            # SMART THUMBNAIL ENGINE: Extract public images (No 403 Forbidden Locks)
+            json_thumb = re.search(r'"image_url"\s*:\s*"([^"]+)"', html_text)
+            if json_thumb:
+                poster_url = json_thumb.group(1).replace('\\/', '/')
             
-            if thumb_match:
-                poster_url = thumb_match.group(1).replace("&amp;", "&")
+            if not poster_url:
+                og_match = re.search(r'<meta property="og:image" content="([^"]+)"', html_text)
+                if og_match:
+                    poster_url = og_match.group(1).replace("&amp;", "&")
 
             return {"view_count": view_count, "upload_date": upload_date, "thumbnail": poster_url}
     except Exception as e:
@@ -154,25 +157,38 @@ def extract_with_ytdlp(url: str) -> dict:
                 info = ydl.extract_info(url, download=False)
 
             title = info.get('title', 'Unknown Video')
-            thumbnail = info.get('thumbnail', '')
             duration = info.get('duration', 0)
             upload_date = info.get('upload_date', '') 
             view_count = info.get('view_count', 0)
 
-            # ALWAYS fetch extra_meta to grab the safe og:image thumbnail (fixes 403 Forbidden)
+            # Metadata fallback also grabs safe public thumbnails
             extra_meta = parse_metadata_fallback(url, provider)
             
             view_count = view_count or extra_meta.get("view_count", 0)
             upload_date = upload_date or extra_meta.get("upload_date", "")
             
-            # Override thumbnail with public og:image to avoid 403 Forbidden CDN hashes
+            # Aggregate all possible thumbnails
+            all_thumbs = []
             safe_thumb = extra_meta.get("thumbnail", "")
-            if safe_thumb and "data:image" not in safe_thumb:
-                thumbnail = safe_thumb
+            if safe_thumb and not safe_thumb.startswith("data:image"):
+                all_thumbs.append(safe_thumb)
 
-            thumbnails = [t['url'] for t in info.get('thumbnails', []) if 'url' in t]
-            if thumbnail and thumbnail not in thumbnails:
-                thumbnails.insert(0, thumbnail)
+            if info.get('thumbnail') and info.get('thumbnail') not in all_thumbs:
+                all_thumbs.append(info.get('thumbnail'))
+
+            for t in info.get('thumbnails', []):
+                if t.get('url') and t.get('url') not in all_thumbs:
+                    all_thumbs.append(t.get('url'))
+
+            # Smart Filtering: Prioritize clean URLs without IP locks (hash/validto)
+            clean_thumbs = [t for t in all_thumbs if 'hash=' not in t and 'validto=' not in t and 'hdnea=' not in t]
+            
+            if clean_thumbs:
+                thumbnail = clean_thumbs[0]
+                thumbnails = clean_thumbs
+            else:
+                thumbnail = all_thumbs[0] if all_thumbs else ""
+                thumbnails = all_thumbs
 
             qualities_dict = {}
 
@@ -180,6 +196,7 @@ def extract_with_ytdlp(url: str) -> dict:
                 f_url = f.get('url', '')
                 if not f_url: continue
                 
+                # Drop broken audio-only streams
                 if f.get('vcodec') == 'none':
                     continue
                 
@@ -210,6 +227,7 @@ def extract_with_ytdlp(url: str) -> dict:
                 if is_hls or 'mp4' in f_url or ext == 'mp4' or protocol.startswith('http'):
                     existing = qualities_dict.get(q_label)
                     
+                    # Overwrite MP4s with HLS if they share the same resolution
                     if not existing or (is_hls and existing['type'] == 'mp4'):
                         qualities_dict[q_label] = {
                             "quality": q_label,
@@ -218,7 +236,7 @@ def extract_with_ytdlp(url: str) -> dict:
                             "height": height
                         }
 
-            # STRICT HLS OVERRIDE
+            # STRICT HLS REQUIREMENT
             has_hls = any(q['type'] == 'hls' for q in qualities_dict.values())
             if has_hls:
                 qualities_dict = {k: v for k, v in qualities_dict.items() if v['type'] == 'hls'}
@@ -238,7 +256,7 @@ def extract_with_ytdlp(url: str) -> dict:
             result = {
                 "status": "success",
                 "title": title,
-                "thumbnail": thumbnail or (thumbnails[0] if thumbnails else ""),
+                "thumbnail": thumbnail,
                 "thumbnails": thumbnails,
                 "duration": duration,
                 "upload_date": upload_date,
@@ -390,7 +408,8 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 @app.get("/api/extract")
 async def extract_endpoint(url: str):
     if not url: return JSONResponse({"status": "error", "error": "Missing URL"})
-    target_url = unquote(url)
+    # FastAPI automatically unquotes the URL. DO NOT unquote it again to prevent base64 padding destruction.
+    target_url = url.strip()
     if "viewkey=" not in target_url and "xnxx.com" not in target_url and "xvideos.com" not in target_url:
         if len(target_url) in [13, 15, 16] and "." not in target_url:
              target_url = f"https://www.pornhub.com/view_video.php?viewkey={target_url}"
@@ -401,7 +420,8 @@ async def extract_endpoint(url: str):
 
 @app.get("/proxy-image")
 async def fallback_proxy_image(url: str):
-    target = unquote(url).strip()
+    # CRITICAL FIX: Do not use unquote() here! It destroys the `+` sign in the base64 hash parameter.
+    target = url.strip()
     if target.startswith('//'): target = "https:" + target
     
     headers = {
@@ -430,7 +450,7 @@ async def fallback_proxy_image(url: str):
 
 @app.get("/proxy-m3u8")
 async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", request_host: str = ""):
-    target = unquote(url)
+    target = url.strip()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
         "Referer": "https://www.pornhub.com/",
@@ -478,7 +498,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
 
 @app.get("/proxy-video")
 async def proxy_video(request: Request, url: str):
-    target = unquote(url)
+    target = url.strip()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
         "Referer": "https://www.pornhub.com/",
