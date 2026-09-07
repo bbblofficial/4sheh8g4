@@ -157,37 +157,62 @@ def extract_with_ytdlp(url: str) -> dict:
             if thumbnail and thumbnail not in thumbnails:
                 thumbnails.insert(0, thumbnail)
 
-            # Dictionary to override MP4s if HLS is found for the same quality
             qualities_dict = {}
 
             for f in info.get('formats', []):
                 f_url = f.get('url', '')
                 if not f_url: continue
                 
-                height = f.get('height')
-                q_label = f"{height}p" if height else (f.get('format_note') or f.get('resolution') or "Auto")
+                # Drop broken audio-only streams disguised as video qualities
+                if f.get('vcodec') == 'none':
+                    continue
                 
-                protocol = f.get('protocol', '')
-                ext = f.get('ext', '')
+                protocol = str(f.get('protocol', '')).lower()
+                ext = str(f.get('ext', '')).lower()
                 format_id = str(f.get('format_id', '')).lower()
+                format_note = str(f.get('format_note', '')).lower()
+                res_str = str(f.get('resolution', '')).lower()
 
-                # Robust HLS detection
+                # Extremely robust HLS detection
                 is_hls = 'm3u8' in protocol or ext == 'm3u8' or '.m3u8' in f_url or 'hls' in format_id
 
-                if q_label == "Auto" and is_hls:
-                    q_label = "Auto (HLS)"
+                height = f.get('height')
+                
+                # If yt-dlp misses the height for HLS streams, force parse it using Regex
+                if not height:
+                    m = re.search(r'(\d{3,4})[pP]?', format_id + "-" + format_note + "-" + res_str)
+                    if m:
+                        height = int(m.group(1))
 
-                if is_hls or 'mp4' in f_url or ext == 'mp4':
-                    # Priority Override: If it's HLS, always overwrite the MP4 version of the same quality
-                    if q_label not in qualities_dict or (is_hls and qualities_dict[q_label]['type'] == 'mp4'):
+                if height:
+                    q_label = f"{height}p"
+                else:
+                    if "auto" in format_note or "auto" in format_id or is_hls:
+                        q_label = "Auto"
+                        height = 0
+                    else:
+                        continue # Skip unrecognized formats
+
+                if is_hls or 'mp4' in f_url or ext == 'mp4' or protocol.startswith('http'):
+                    existing = qualities_dict.get(q_label)
+                    
+                    # Prioritize HLS by overwriting MP4s
+                    if not existing or (is_hls and existing['type'] == 'mp4'):
                         qualities_dict[q_label] = {
                             "quality": q_label,
                             "url": f_url,
                             "type": "hls" if is_hls else "mp4",
-                            "height": height or (9999 if "Auto" in q_label else 0)
+                            "height": height
                         }
 
-            # Convert dictionary back to a sorted list
+            # =========================================================
+            # STRICT HLS OVERRIDE: "i want just show HLS"
+            # If ANY HLS streams were found, we banish all MP4s entirely.
+            # =========================================================
+            has_hls = any(q['type'] == 'hls' for q in qualities_dict.values())
+            if has_hls:
+                qualities_dict = {k: v for k, v in qualities_dict.items() if v['type'] == 'hls'}
+
             qualities = list(qualities_dict.values())
             qualities.sort(key=lambda x: x['height'], reverse=True)
             for q in qualities:
