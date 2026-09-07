@@ -157,8 +157,8 @@ def extract_with_ytdlp(url: str) -> dict:
             if thumbnail and thumbnail not in thumbnails:
                 thumbnails.insert(0, thumbnail)
 
-            qualities = []
-            seen_qualities = set()
+            # Dictionary to override MP4s if HLS is found for the same quality
+            qualities_dict = {}
 
             for f in info.get('formats', []):
                 f_url = f.get('url', '')
@@ -167,22 +167,28 @@ def extract_with_ytdlp(url: str) -> dict:
                 height = f.get('height')
                 q_label = f"{height}p" if height else (f.get('format_note') or f.get('resolution') or "Auto")
                 
-                if q_label == "Auto" and 'hls' in f.get('format_id', '').lower():
-                    q_label = "Auto (HLS)"
-
                 protocol = f.get('protocol', '')
                 ext = f.get('ext', '')
-                is_hls = 'm3u8' in protocol or ext == 'm3u8' or '.m3u8' in f_url
+                format_id = str(f.get('format_id', '')).lower()
 
-                if q_label not in seen_qualities and (is_hls or 'mp4' in f_url or ext == 'mp4'):
-                    seen_qualities.add(q_label)
-                    qualities.append({
-                        "quality": q_label,
-                        "url": f_url,
-                        "type": "hls" if is_hls else "mp4",
-                        "height": height or (9999 if "Auto" in q_label else 0)
-                    })
+                # Robust HLS detection
+                is_hls = 'm3u8' in protocol or ext == 'm3u8' or '.m3u8' in f_url or 'hls' in format_id
 
+                if q_label == "Auto" and is_hls:
+                    q_label = "Auto (HLS)"
+
+                if is_hls or 'mp4' in f_url or ext == 'mp4':
+                    # Priority Override: If it's HLS, always overwrite the MP4 version of the same quality
+                    if q_label not in qualities_dict or (is_hls and qualities_dict[q_label]['type'] == 'mp4'):
+                        qualities_dict[q_label] = {
+                            "quality": q_label,
+                            "url": f_url,
+                            "type": "hls" if is_hls else "mp4",
+                            "height": height or (9999 if "Auto" in q_label else 0)
+                        }
+
+            # Convert dictionary back to a sorted list
+            qualities = list(qualities_dict.values())
             qualities.sort(key=lambda x: x['height'], reverse=True)
             for q in qualities:
                 q.pop('height', None)
@@ -219,7 +225,6 @@ def extract_with_ytdlp(url: str) -> dict:
                 continue
 
     return {"status": "error", "error": f"Failed after retries: {last_error}", "url": url}
-
 
 @app.get("/api/explore")
 async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub"):
