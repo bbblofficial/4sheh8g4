@@ -110,7 +110,6 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
 
 def extract_with_ytdlp(url: str) -> dict:
     is_pornhub = "pornhub.com" in url
-    # Disable cache for pornhub to prevent IP lock and 474 errors from stale tokens
     if not is_pornhub and url in extraction_cache:
         return extraction_cache[url]
 
@@ -378,11 +377,6 @@ async def fallback_proxy_image(url: str):
     except Exception:
         return Response(status_code=404)
 
-
-# =========================================================================
-# IP LOCK BYPASS PROXIES FOR HLS & VIDEO SEGMENTS
-# =========================================================================
-
 @app.get("/proxy-m3u8")
 async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", request_host: str = ""):
     target = unquote(url)
@@ -426,7 +420,6 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
             })
     except Exception as e:
         return Response(status_code=502, content="Backend Proxy Error")
-
 
 @app.get("/proxy-video")
 async def proxy_video(request: Request, url: str):
