@@ -35,7 +35,7 @@ def search_pornhub_with_ytdlp(q: str, page: int):
         'extract_flat': True,
         'nocheckcertificate': True,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Referer': 'https://www.pornhub.com/',
             'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
         }
@@ -77,7 +77,7 @@ def search_pornhub_with_ytdlp(q: str, page: int):
 
 def parse_metadata_fallback(url: str, provider: str) -> dict:
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cookie': 'has_accepted_cookie=1; age_verified=1;'
     }
@@ -88,6 +88,7 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
             html_text = resp.text
             view_count = 0
             upload_date = ""
+            poster_url = ""
 
             view_match = re.search(r'([\d,\.]+)\s*(?:Views|views|Vistas|M views|k views)', html_text)
             if view_match:
@@ -103,10 +104,20 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
             if date_match:
                 upload_date = date_match.group(0)
 
-            return {"view_count": view_count, "upload_date": upload_date}
+            # EXTRACT PUBLIC THUMBNAIL (OG:IMAGE) TO FIX 403 ERROR
+            thumb_match = re.search(r'<meta property="og:image" content="([^"]+)"', html_text)
+            if not thumb_match:
+                thumb_match = re.search(r'<meta name="twitter:image" content="([^"]+)"', html_text)
+            if not thumb_match:
+                thumb_match = re.search(r'poster="([^"]+)"', html_text)
+            
+            if thumb_match:
+                poster_url = thumb_match.group(1).replace("&amp;", "&")
+
+            return {"view_count": view_count, "upload_date": upload_date, "thumbnail": poster_url}
     except Exception as e:
         logger.error(f"Metadata fallback scrape error: {e}")
-    return {"view_count": 0, "upload_date": ""}
+    return {"view_count": 0, "upload_date": "", "thumbnail": ""}
 
 def extract_with_ytdlp(url: str) -> dict:
     is_pornhub = "pornhub.com" in url
@@ -121,7 +132,7 @@ def extract_with_ytdlp(url: str) -> dict:
         'nocheckcertificate': True,
         'age_limit': 21,
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Referer': 'https://www.pornhub.com/',
             'Origin': 'https://www.pornhub.com',
             'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
@@ -148,10 +159,16 @@ def extract_with_ytdlp(url: str) -> dict:
             upload_date = info.get('upload_date', '') 
             view_count = info.get('view_count', 0)
 
-            if not view_count or not upload_date:
-                extra_meta = parse_metadata_fallback(url, provider)
-                view_count = view_count or extra_meta.get("view_count", 0)
-                upload_date = upload_date or extra_meta.get("upload_date", "")
+            # ALWAYS fetch extra_meta to grab the safe og:image thumbnail (fixes 403 Forbidden)
+            extra_meta = parse_metadata_fallback(url, provider)
+            
+            view_count = view_count or extra_meta.get("view_count", 0)
+            upload_date = upload_date or extra_meta.get("upload_date", "")
+            
+            # Override thumbnail with public og:image to avoid 403 Forbidden CDN hashes
+            safe_thumb = extra_meta.get("thumbnail", "")
+            if safe_thumb and "data:image" not in safe_thumb:
+                thumbnail = safe_thumb
 
             thumbnails = [t['url'] for t in info.get('thumbnails', []) if 'url' in t]
             if thumbnail and thumbnail not in thumbnails:
@@ -163,7 +180,6 @@ def extract_with_ytdlp(url: str) -> dict:
                 f_url = f.get('url', '')
                 if not f_url: continue
                 
-                # Drop broken audio-only streams disguised as video qualities
                 if f.get('vcodec') == 'none':
                     continue
                 
@@ -173,12 +189,10 @@ def extract_with_ytdlp(url: str) -> dict:
                 format_note = str(f.get('format_note', '')).lower()
                 res_str = str(f.get('resolution', '')).lower()
 
-                # Extremely robust HLS detection
                 is_hls = 'm3u8' in protocol or ext == 'm3u8' or '.m3u8' in f_url or 'hls' in format_id
 
                 height = f.get('height')
                 
-                # If yt-dlp misses the height for HLS streams, force parse it using Regex
                 if not height:
                     m = re.search(r'(\d{3,4})[pP]?', format_id + "-" + format_note + "-" + res_str)
                     if m:
@@ -191,12 +205,11 @@ def extract_with_ytdlp(url: str) -> dict:
                         q_label = "Auto"
                         height = 0
                     else:
-                        continue # Skip unrecognized formats
+                        continue 
 
                 if is_hls or 'mp4' in f_url or ext == 'mp4' or protocol.startswith('http'):
                     existing = qualities_dict.get(q_label)
                     
-                    # Prioritize HLS by overwriting MP4s
                     if not existing or (is_hls and existing['type'] == 'mp4'):
                         qualities_dict[q_label] = {
                             "quality": q_label,
@@ -205,10 +218,7 @@ def extract_with_ytdlp(url: str) -> dict:
                             "height": height
                         }
 
-            # =========================================================
-            # STRICT HLS OVERRIDE: "i want just show HLS"
-            # If ANY HLS streams were found, we banish all MP4s entirely.
-            # =========================================================
+            # STRICT HLS OVERRIDE
             has_hls = any(q['type'] == 'hls' for q in qualities_dict.values())
             if has_hls:
                 qualities_dict = {k: v for k, v in qualities_dict.items() if v['type'] == 'hls'}
@@ -393,15 +403,26 @@ async def extract_endpoint(url: str):
 async def fallback_proxy_image(url: str):
     target = unquote(url).strip()
     if target.startswith('//'): target = "https:" + target
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://www.pornhub.com/',
+        'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
+    }
+    
     try:
-        async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
-            req = await client.get(target, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.pornhub.com/'})
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            req = await client.get(target, headers=headers)
+            if req.status_code != 200:
+                return Response(status_code=req.status_code, content=f"Image CDN Error: {req.status_code}")
+                
             return StreamingResponse(
                 (chunk async for chunk in req.aiter_bytes()),
                 status_code=req.status_code,
                 headers={
                     "Content-Type": req.headers.get("Content-Type", "image/jpeg"),
-                    "Access-Control-Allow-Origin": "*"
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "public, max-age=86400"
                 }
             )
     except Exception:
@@ -410,7 +431,11 @@ async def fallback_proxy_image(url: str):
 @app.get("/proxy-m3u8")
 async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", request_host: str = ""):
     target = unquote(url)
-    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.pornhub.com/"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
+        "Referer": "https://www.pornhub.com/",
+        "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
+    }
     
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
@@ -454,7 +479,11 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
 @app.get("/proxy-video")
 async def proxy_video(request: Request, url: str):
     target = unquote(url)
-    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.pornhub.com/"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
+        "Referer": "https://www.pornhub.com/",
+        "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
+    }
     if "range" in request.headers:
         headers["Range"] = request.headers["range"]
         
