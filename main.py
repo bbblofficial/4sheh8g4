@@ -30,7 +30,6 @@ app.add_middleware(
 )
 
 def search_pornhub_with_ytdlp(q: str, page: int):
-    """Primary handler for Pornhub searches relying on yt-dlp to bypass Cloudflare"""
     ydl_opts = {
         'quiet': True,
         'extract_flat': True,
@@ -78,7 +77,7 @@ def search_pornhub_with_ytdlp(q: str, page: int):
 
 def parse_metadata_fallback(url: str, provider: str) -> dict:
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cookie': 'has_accepted_cookie=1; age_verified=1;'
     }
@@ -162,25 +161,37 @@ def extract_with_ytdlp(url: str) -> dict:
             qualities = []
             seen_qualities = set()
 
+            # FIX: Properly parse formats without dropping Height-less HLS playlists
             for f in info.get('formats', []):
-                height = f.get('height')
                 f_url = f.get('url', '')
-                if not height or not f_url:
+                if not f_url:
                     continue
                 
-                q_label = f"{height}p"
+                height = f.get('height')
+                # Fallbacks for missing height (Common on Pornhub HLS master manifests)
+                q_label = f"{height}p" if height else (f.get('format_note') or f.get('resolution') or "Auto")
+                
+                if q_label == "Auto" and 'hls' in f.get('format_id', '').lower():
+                    q_label = "Auto (HLS)"
+
                 protocol = f.get('protocol', '')
                 ext = f.get('ext', '')
 
-                if q_label not in seen_qualities:
+                is_hls = 'm3u8' in protocol or ext == 'm3u8' or '.m3u8' in f_url
+
+                if q_label not in seen_qualities and (is_hls or 'mp4' in f_url or ext == 'mp4'):
                     seen_qualities.add(q_label)
                     qualities.append({
                         "quality": q_label,
                         "url": f_url,
-                        "type": "hls" if ('m3u8' in protocol or ext == 'm3u8') else "mp4"
+                        "type": "hls" if is_hls else "mp4",
+                        "height": height or (9999 if "Auto" in q_label else 0)
                     })
 
-            qualities.sort(key=lambda x: int(x['quality'].replace('p', '')), reverse=True)
+            # Sort intelligently: Highest heights and Auto combinations first
+            qualities.sort(key=lambda x: x['height'], reverse=True)
+            for q in qualities:
+                q.pop('height', None)
 
             if not qualities:
                 last_error = "No valid streams found"
@@ -202,7 +213,10 @@ def extract_with_ytdlp(url: str) -> dict:
                 "provider": provider
             }
             
-            extraction_cache[url] = result
+            # CRITICAL FIX: Only cache non-pornhub videos to bypass IP binding lock
+            if provider != "pornhub":
+                extraction_cache[url] = result
+                
             return result
 
         except Exception as e:
@@ -217,7 +231,7 @@ def extract_with_ytdlp(url: str) -> dict:
 @app.get("/api/explore")
 async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub"):
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;',
         'Referer': 'https://www.pornhub.com/'
