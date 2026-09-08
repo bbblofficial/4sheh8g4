@@ -302,7 +302,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
     seen = {v["url"] for v in videos}
 
     current_page = page
-    while len(videos) < 20 and current_page < page + 3:
+    while len(videos) < 40 and current_page < page + 5:
         current_page += 1
         more_videos = await fetch_page_videos(provider, q, current_page, headers)
         if not more_videos:
@@ -311,8 +311,6 @@ async def search_provider_robust(provider: str, q: str, page: int):
             if mv["url"] not in seen:
                 seen.add(mv["url"])
                 videos.append(mv)
-            if len(videos) >= 20:
-                break
 
     if not videos:
         try:
@@ -359,13 +357,11 @@ async def search_provider_robust(provider: str, q: str, page: int):
                         if v_item["url"] not in seen:
                             seen.add(v_item["url"])
                             videos.append(v_item)
-                        if len(videos) >= 20: break
         except Exception as e:
             logger.error(f"yt-dlp flat fallback search error for {provider}: {e}")
 
-    final_videos = videos[:20]
-    search_cache[cache_key] = final_videos
-    return final_videos
+    search_cache[cache_key] = videos
+    return videos
 
 def parse_metadata_fallback(url: str, provider: str) -> dict:
     base_domain = "https://www.pornhub.com"
@@ -704,7 +700,7 @@ async def proxy_video(request: Request, url: str):
                 finally:
                     await client.aclose()
 
-            return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp_headers)
+            return StreamingResponse(stream_generator(), status_index=resp.status_code, status_code=resp.status_code, headers=resp_headers)
     except Exception:
         await client.aclose()
     return Response(status_code=502)
