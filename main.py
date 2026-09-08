@@ -35,7 +35,7 @@ app.add_middleware(
 async def search_provider_robust(provider: str, q: str, page: int):
     cache_key = f"{provider}:{q}:{page}"
     if cache_key in search_cache:
-        return search_cache[cache_key][:20]
+        return search_cache[cache_key]
 
     videos = []
     headers = {
@@ -180,23 +180,26 @@ async def search_provider_robust(provider: str, q: str, page: int):
 
                 thumb = ""
                 
-                img_tags = item.select('img')
-                for img in img_tags:
-                    src_candidate = (img.get('data-src') or img.get('src') or img.get('data-lazy-src') or img.get('data-thumb') or img.get('data-image') or "")
-                    if src_candidate and 'svg' not in src_candidate and 'logo' not in src_candidate and 'results' not in src_candidate:
-                        thumb = src_candidate
+                # Try to extract valid thumb URL from all available attributes or tags
+                for attr_name in ['data-image', 'data-poster', 'data-src', 'data-background', 'content']:
+                    val = item.get(attr_name, '')
+                    if val and val.startswith('http') and 'svg' not in val and 'logo' not in val:
+                        thumb = val
                         break
 
                 if not thumb:
-                    for attr_name in ['data-image', 'data-poster', 'data-src', 'data-background', 'style']:
-                        attr_val = item.get(attr_name, '')
-                        if attr_val:
-                            match_url = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', attr_val)
-                            if match_url:
-                                candidate = match_url.group(0)
-                                if 'logo' not in candidate and 'svg' not in candidate:
-                                    thumb = candidate
-                                    break
+                    img_tags = item.select('img')
+                    for img in img_tags:
+                        for attr_name in ['data-src', 'src', 'data-lazy-src', 'data-thumb', 'data-image', 'srcset']:
+                            src_candidate = img.get(attr_name, '')
+                            if src_candidate:
+                                match_url = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', src_candidate)
+                                if match_url:
+                                    candidate = match_url.group(0)
+                                    if 'svg' not in candidate and 'logo' not in candidate and 'results' not in candidate:
+                                        thumb = candidate
+                                        break
+                        if thumb: break
 
                 if not thumb:
                     source_tag = item.select_one('source')
@@ -213,6 +216,17 @@ async def search_provider_robust(provider: str, q: str, page: int):
                         candidate = match_img.group(0)
                         if 'logo' not in candidate and 'svg' not in candidate and 'results' not in candidate:
                             thumb = candidate
+
+                # Fallback to backend extraction if thumbnail is still missing or invalid
+                if not thumb or 'svg' in thumb or 'logo' in thumb or 'results' in thumb:
+                    try:
+                        ydl_opts = {'quiet': True, 'nocheckcertificate': True, 'skip_download': True}
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            meta = ydl.extract_info(full_url, download=False)
+                            if meta and meta.get('thumbnail'):
+                                thumb = meta.get('thumbnail')
+                    except Exception:
+                        thumb = ""
 
                 videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                 if len(videos) >= 20: break
