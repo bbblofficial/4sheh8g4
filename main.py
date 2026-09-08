@@ -180,7 +180,6 @@ async def search_provider_robust(provider: str, q: str, page: int):
 
                 thumb = ""
                 
-                # Deep extraction for xHamster thumbnails across nested tags, attributes, and styles
                 img_tags = item.select('img')
                 for img in img_tags:
                     src_candidate = (img.get('data-src') or img.get('src') or img.get('data-lazy-src') or img.get('data-thumb') or img.get('data-image') or "")
@@ -640,7 +639,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                         "Access-Control-Allow-Origin": "*",
                         "Cache-Control": "no-cache, no-store"
                     })
-            exceptException:
+            except Exception:
                 await asyncio.sleep(0.5)
     return Response(status_code=502, content="Backend Proxy Error")
 
