@@ -89,9 +89,11 @@ async def search_provider_robust(provider: str, q: str, page: int):
                     href = item.get('href', '')
                     if not href or '/watch/' not in href: continue
                     full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
-                    title = item.get('title') or item.get_text(strip=True)
+                    title = item.get('title') or item.get('alt') or item.get_text(strip=True)
                     img_tag = item.select_one('img')
                     if img_tag:
+                        if not title or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title):
+                            title = img_tag.get('alt') or title
                         thumb = (img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
                 else:
                     a_tag = item.select_one('a[href*="/watch/"]')
@@ -99,9 +101,11 @@ async def search_provider_robust(provider: str, q: str, page: int):
                     href = a_tag.get('href', '')
                     full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
                     title_tag = item.select_one('a[href*="/watch/"] [title], p.title, span.title, a, div.title, h3, h4')
-                    title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else a_tag.get('title', '')
+                    title = title_tag.get('title') or title_tag.get('alt') or title_tag.get_text(strip=True) if title_tag else a_tag.get('title', '')
                     img_tag = item.select_one('img')
                     if img_tag:
+                        if not title or title == "Unknown Video" or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title):
+                            title = img_tag.get('alt') or title
                         thumb = (img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
 
                 full_url = full_url.split('?')[0].rstrip('/')
@@ -112,7 +116,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
                 if not match_id: continue
                 vkey = match_id.group(1)
 
-                if not title or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title) or 'youporn' in title.lower():
+                if not title or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title) or 'youporn' in title.lower():
                     title = f"YouPorn Video {vkey}"
 
                 videos.append({
@@ -208,13 +212,13 @@ async def search_provider_robust(provider: str, q: str, page: int):
                 if title_tag:
                     title = title_tag.get('title') or title_tag.get_text(strip=True)
                 
-                if not title or title == vid_id or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title) or 'redtube' in title.lower():
+                if not title or title == vid_id or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title) or 'redtube' in title.lower():
                     alt_title = a_tag.get('title', '')
-                    if alt_title and alt_title != vid_id and not alt_title.isdigit() and not re.match(r'^\d{1,2}:\d{2}', alt_title):
+                    if alt_title and alt_title != vid_id and not alt_title.isdigit() and not re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', alt_title):
                         title = alt_title
                     else:
                         img_alt = item.select_one('img[alt]')
-                        if img_alt and img_alt.get('alt') and img_alt.get('alt') != vid_id:
+                        if img_alt and img_alt.get('alt') and img_alt.get('alt') != vid_id and not re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', img_alt.get('alt')):
                             title = img_alt.get('alt')
                         else:
                             title = vid_id.replace('-', ' ').title()
@@ -343,7 +347,7 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                 if not scraped_title:
                     title_tag = soup.find('title')
                     if title_tag:
-                        scraped_title = title_tag.get_text().replace('&amp;', '&').split('- RedTube')[0].split('- Pornhub')[0].strip()
+                        scraped_title = title_tag.get_text().replace('&amp;', '&').split('- RedTube')[0].split('- Pornhub')[0].split('- YouPorn')[0].strip()
 
                 og_img = soup.find('meta', property='og:image')
                 if og_img and og_img.get('content'):
@@ -420,10 +424,10 @@ def extract_with_ytdlp(url: str) -> dict:
 
             extra_meta = parse_metadata_fallback(url, provider)
             
-            if not title or title.isdigit() or len(title) <= 8 and title.isalnum():
+            if not title or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title) or (len(title) <= 8 and title.isalnum()):
                 if extra_meta.get("title"):
                     title = extra_meta.get("title")
-            if not title:
+            if not title or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title):
                 title = "Unknown Video"
 
             view_count = view_count or extra_meta.get("view_count", 0)
@@ -611,6 +615,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
             except Exception:
                 await asyncio.sleep(0.5)
     return Response(status_code=502, content="Backend Proxy Error")
+
 @app.get("/proxy-video")
 async def proxy_video(request: Request, url: str):
     target = url.strip()
@@ -646,6 +651,7 @@ async def proxy_video(request: Request, url: str):
     except Exception:
         await client.aclose()
     return Response(status_code=502)
+
 @app.get("/")
 def health():
     return {"status": "Online", "engine": "Fast Edge Extraction Engine"}
