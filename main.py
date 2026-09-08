@@ -72,13 +72,13 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
     if provider == "pornhub":
         try:
             tree = lxml_html.fromstring(html_text)
-            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or @data-video-vkey] | //div[contains(@class, "pcVideoListItem") or contains(@class, "videoblock") or contains(@class, "wrap")]')
+            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or @data-video-vkey] | //div[contains(@class, "pcVideoListItem") or contains(@class, "videoblock") or contains(@class, "wrap") or contains(@class, "nf-video")]')
             
             seen_ph_vkeys = set()
             for item in items:
-                vkey_attr = item.get("data-video-vkey")
+                vkey_attr = item.get("data-video-vkey") or item.get("data-id")
                 if not vkey_attr:
-                    vkey_list = item.xpath('.//@data-video-vkey')
+                    vkey_list = item.xpath('.//@data-video-vkey | .//@data-id')
                     if vkey_list:
                         vkey_attr = vkey_list[0]
 
@@ -103,13 +103,13 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
                     if match_vkey:
                         vkey = match_vkey.group(1)
 
-                if not vkey or len(vkey) < 10 or vkey in seen_ph_vkeys:
+                if not vkey or len(vkey) < 5 or vkey in seen_ph_vkeys:
                     continue
                 
                 seen_ph_vkeys.add(vkey)
                 full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
 
-                title_list = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title | .//span[@class="title"]/text()')
+                title_list = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title | .//span[@class="title"]/text() | .//div[contains(@class,"title")]//text()')
                 title = "Unknown Video"
                 for t in title_list:
                     if t and t.strip() and not t.strip().isdigit() and len(t.strip()) > 2:
@@ -342,7 +342,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
     raw_videos = []
     current_page = page
 
-    while len(raw_videos) < 24 and current_page < page + 5:
+    while len(raw_videos) < 20 and current_page < page + 5:
         page_videos = await fetch_page_videos(provider, q, current_page, headers)
         if not page_videos:
             break
@@ -365,6 +365,58 @@ async def search_provider_robust(provider: str, q: str, page: int):
         if u:
             seen_urls.add(u)
         unique_videos.append(v)
+
+    if not unique_videos:
+        try:
+            if provider == "youporn":
+                search_url = f"https://www.youporn.com/search/?query={quote(q)}&page={page}"
+            elif provider == "xhamster":
+                search_url = f"https://xhamster.com/search/{quote(q)}"
+            elif provider == "redtube":
+                search_url = f"https://www.redtube.com/?search={quote(q)}"
+            elif provider == "xnxx":
+                search_url = f"https://www.xnxx.com/search/{quote(q)}"
+            elif provider == "xvideos":
+                search_url = f"https://www.xvideos.com/?k={quote(q)}"
+            else:
+                search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
+
+            ydl_opts = {'quiet': True, 'extract_flat': True, 'nocheckcertificate': True, 'http_headers': headers}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(search_url, download=False)
+                if info:
+                    for entry in info.get('entries', []):
+                        if not entry: continue
+                        url = entry.get('url', '')
+                        vkey = entry.get('id', '')
+                        if not vkey and '/watch/' in url:
+                            parts = [p for p in url.split('/') if p]
+                            vkey = parts[1] if len(parts) > 1 and parts[0] == 'watch' else (parts[-1] if parts else "")
+                        elif not vkey and 'viewkey=' in url:
+                            vkey = url.split('viewkey=')[1].split('&')[0]
+                        elif not vkey and any(d in url for d in ['videos/', 'video-']):
+                            parts = [p for p in url.split('/') if p]
+                            vkey = parts[-1] if parts else ""
+                        if not vkey: continue
+
+                        title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
+                        thumb = entry.get('thumbnail', '')
+                        if not thumb and entry.get('thumbnails'):
+                            thumb = entry.get('thumbnails')[0].get('url', '')
+
+                        vk = str(vkey).strip()
+                        u = (url if url.startswith('http') else search_url).split('?')[0].rstrip('/')
+                        if vk in seen_vkeys or u in seen_urls:
+                            continue
+                        if vk: seen_vkeys.add(vk)
+                        if u: seen_urls.add(u)
+
+                        unique_videos.append({
+                            "vkey": vkey, "title": title, "thumbnail": thumb,
+                            "url": url if url.startswith('http') else search_url, "provider": provider
+                        })
+        except Exception as e:
+            logger.error(f"yt-dlp flat fallback search error for {provider}: {e}")
 
     search_cache[cache_key] = unique_videos
     return unique_videos
@@ -691,7 +743,7 @@ async def proxy_video(request: Request, url: str):
     if "range" in request.headers:
         headers["Range"] = request.headers["range"]
 
-    client = httpx.AsyncClient(timeout=30.0, follow_nested_redirects=True if hasattr(httpx, 'follow_nested_redirects') else True)
+    client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
     try:
         req = client.build_request("GET", target, headers=headers)
         resp = await client.send(req, stream=True)
