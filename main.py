@@ -83,6 +83,10 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
         base_domain = "https://www.xnxx.com"
     elif "xvideos.com" in url:
         base_domain = "https://www.xvideos.com"
+    elif "redtube.com" in url:
+        base_domain = "https://www.redtube.com"
+    elif "youporn.com" in url:
+        base_domain = "https://www.youporn.com"
 
     url = re.sub(r'https?://[a-zA-Z0-9-]+\.' + provider + r'\.com', base_domain, url)
     headers = {
@@ -139,8 +143,12 @@ def extract_with_ytdlp(url: str) -> dict:
         provider = "xnxx"
     elif "xvideos.com" in url:
         provider = "xvideos"
+    elif "redtube.com" in url:
+        provider = "redtube"
+    elif "youporn.com" in url:
+        provider = "youporn"
 
-    referer_url = f"https://www.{provider}.com/" if provider != "xhamster" else "https://xhamster.com/"
+    referer_url = f"https://www.{provider}.com/" if provider not in ["xhamster", "redtube", "youporn"] else f"https://www.{provider}.com/"
 
     ydl_opts = {
         'quiet': True,
@@ -280,11 +288,15 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;',
-        'Referer': 'https://xhamster.com/' if provider == "xhamster" else 'https://www.pornhub.com/'
+        'Referer': f'https://www.{provider}.com/'
     }
 
     if provider == "xhamster":
         search_url = f"https://xhamster.com/search/{quote(q)}" if page <= 1 else f"https://xhamster.com/search/{quote(q)}/{page}"
+    elif provider == "redtube":
+        search_url = f"https://www.redtube.com/?search={quote(q)}" if page <= 1 else f"https://www.redtube.com/?search={quote(q)}&page={page}"
+    elif provider == "youporn":
+        search_url = f"https://www.youporn.com/search/?query={quote(q)}" if page <= 1 else f"https://www.youporn.com/search/?query={quote(q)}&page={page}"
     elif provider == "xnxx":
         search_url = f"https://www.xnxx.com/search/{quote(q)}" if page <= 1 else f"https://www.xnxx.com/search/{quote(q)}/{page}"
     elif provider == "xvideos":
@@ -310,46 +322,74 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
             videos = []
             seen_urls = set()
 
-            if provider == "xhamster":
+            if provider == "redtube":
+                items = tree.xpath('//div[contains(@class, "videoBox")] | //li[contains(@class, "videoblock")] | //div[contains(@class, "video-item")]')
+                for item in items:
+                    link_elems = item.xpath('.//a/@href')
+                    href = next((l for l in link_elems if l and (l.isdigit() or '/' in l)), None)
+                    if not href: continue
+                    full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
+                    if full_url in seen_urls: continue
+                    seen_urls.add(full_url)
+
+                    vid_parts = [p for p in full_url.split('/') if p]
+                    vid_id = vid_parts[-1] if vid_parts else "unknown"
+
+                    title_elems = item.xpath('.//a/@title | .//img/@alt | .//span[@class="title"]/text() | .//a/text()')
+                    title = next((t.strip() for t in title_elems if t and len(t.strip()) > 3), "Unknown Video")
+
+                    raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
+                    thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t), "")
+                    if not thumb and raw_thumbs: thumb = raw_thumbs[0]
+
+                    videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "redtube"})
+                    if len(videos) >= 48: break
+
+            elif provider == "youporn":
+                items = tree.xpath('//div[contains(@class, "video-box")] | //div[contains(@class, "item")] | //li[contains(@class, "video-tile")]')
+                for item in items:
+                    link_elems = item.xpath('.//a/@href')
+                    href = next((l for l in link_elems if l and ('/watch/' in l)), None)
+                    if not href: continue
+                    full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
+                    if full_url in seen_urls: continue
+                    seen_urls.add(full_url)
+
+                    vid_parts = [p for p in full_url.split('/') if p]
+                    vid_id = vid_parts[1] if len(vid_parts) > 1 and vid_parts[0] == 'watch' else (vid_parts[-1] if vid_parts else "unknown")
+
+                    title_elems = item.xpath('.//a/@title | .//img/@alt | .//p[@class="title"]/text() | .//a/text()')
+                    title = next((t.strip() for t in title_elems if t and len(t.strip()) > 3), "Unknown Video")
+
+                    raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
+                    thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t), "")
+                    if not thumb and raw_thumbs: thumb = raw_thumbs[0]
+
+                    videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "youporn"})
+                    if len(videos) >= 48: break
+
+            elif provider == "xhamster":
                 items = tree.xpath('//div[contains(@class, "video-thumb")] | //div[contains(@class, "thumb-list__item")] | //div[contains(@class, "video-container")] | //div[contains(@class, "cell")] | //article')
-                
                 for item in items:
                     link_elems = item.xpath('.//a[contains(@class, "video-thumb__image-container")]/@href | .//a[contains(@class, "thumb-image-container")]/@href | .//a/@href')
                     href = next((l for l in link_elems if l and ('/videos/' in l or '/movie/' in l)), None)
-                    if not href:
-                        href = next((l for l in link_elems if l and ('http' in l or '/' in l)), None)
                     if not href: continue
 
                     full_url = href if href.startswith('http') else f"https://xhamster.com{href}"
-                    
-                    if not re.search(r'/videos?/', full_url) or full_url in seen_urls:
-                        continue
+                    if not re.search(r'/videos?/', full_url) or full_url in seen_urls: continue
                     seen_urls.add(full_url)
                     
                     vid_parts = [p for p in full_url.split('/') if p]
                     vid_id = vid_parts[-1] if vid_parts else "unknown"
 
                     title_elems = item.xpath('.//a[contains(@class, "video-thumb__title")]/text() | .//a/@title | .//img/@alt | .//h4/text() | .//p/text()')
-                    title = next((t.strip() for t in title_elems if t and len(t.strip()) > 3 and "unknown" not in t.lower()), "")
-                    if not title:
-                        all_texts = item.xpath('.//a//text() | .//span//text()')
-                        title = next((t.strip() for t in all_texts if t and len(t.strip()) > 3 and "unknown" not in t.lower()), "Unknown Video")
+                    title = next((t.strip() for t in title_elems if t and len(t.strip()) > 3 and "unknown" not in t.lower()), "Unknown Video")
 
                     raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
                     thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t), "")
                     if not thumb and raw_thumbs: thumb = raw_thumbs[0]
-                    if not thumb:
-                        srcset = item.xpath('.//img/@srcset')
-                        if srcset:
-                            thumb = srcset[0].split(',')[0].strip().split(' ')[0]
 
-                    videos.append({
-                        "vkey": vid_id,
-                        "title": title,
-                        "thumbnail": thumb,
-                        "url": full_url,
-                        "provider": "xhamster"
-                    })
+                    videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                     if len(videos) >= 48: break
 
             elif provider == "xnxx":
@@ -370,7 +410,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
                     if not thumb and raw_thumbs: thumb = raw_thumbs[0]
                     if not thumb: continue
-                    
+
                     videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xnxx"})
                     if len(videos) >= 48: break
 
@@ -436,14 +476,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                             break
                     if not thumb: continue
 
-                    videos.append({
-                        "vkey": vkey,
-                        "title": title,
-                        "thumbnail": thumb,
-                        "url": full_url,
-                        "provider": "pornhub"
-                    })
-
+                    videos.append({"vkey": vkey, "title": title, "thumbnail": thumb, "url": full_url, "provider": "pornhub"})
                     if len(videos) >= 48: break
                 
                 if len(videos) == 0:
@@ -461,7 +494,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 async def extract_endpoint(url: str):
     if not url: return JSONResponse({"status": "error", "error": "Missing URL"})
     target_url = url.strip()
-    if "viewkey=" not in target_url and "xhamster.com" not in target_url and "xnxx.com" not in target_url and "xvideos.com" not in target_url:
+    if "viewkey=" not in target_url and not any(d in target_url for d in ["xhamster.com", "xnxx.com", "xvideos.com", "redtube.com", "youporn.com"]):
         if len(target_url) in [13, 15, 16] and "." not in target_url:
              target_url = f"https://www.pornhub.com/view_video.php?viewkey={target_url}"
     loop = asyncio.get_running_loop()
@@ -475,7 +508,7 @@ async def fallback_proxy_image(url: str):
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://xhamster.com/',
+        'Referer': 'https://www.redtube.com/',
         'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
     }
     
@@ -502,7 +535,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
     target = url.strip()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
-        "Referer": "https://xhamster.com/",
+        "Referer": "https://www.redtube.com/",
         "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
     }
     
@@ -550,7 +583,7 @@ async def proxy_video(request: Request, url: str):
     target = url.strip()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
-        "Referer": "https://xhamster.com/",
+        "Referer": "https://www.redtube.com/",
         "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
     }
     if "range" in request.headers:
