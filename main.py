@@ -54,6 +54,51 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
         headers['Referer'] = 'https://www.pornhub.com/'
 
+    # Force using yt-dlp extractor for Pornhub search to bypass layout and anti-bot blocks reliably
+    if provider == "pornhub":
+        try:
+            ydl_opts = {'quiet': True, 'extract_flat': True, 'nocheckcertificate': True, 'http_headers': headers}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(search_url, download=False)
+                if info and 'entries' in info:
+                    for entry in info.get('entries', []):
+                        if not entry: continue
+                        url = entry.get('url', '')
+                        vkey = entry.get('id', '')
+                        if not vkey and 'viewkey=' in url:
+                            try:
+                                vkey = url.split('viewkey=')[1].split('&')[0]
+                            except:
+                                pass
+                        elif not vkey and '/video/' in url:
+                            parts = [p for p in url.split('/') if p]
+                            if parts:
+                                vkey = parts[-1]
+                        
+                        if not vkey or len(vkey) < 5:
+                            continue
+
+                        title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
+                        if not title or "pornhub" in title.lower():
+                            title = f"Pornhub Video {vkey}"
+                            
+                        thumb = entry.get('thumbnail', '')
+                        if not thumb and entry.get('thumbnails'):
+                            thumb = entry.get('thumbnails')[0].get('url', '')
+
+                        full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
+                        videos.append({
+                            "vkey": vkey,
+                            "title": title,
+                            "thumbnail": thumb,
+                            "url": full_url,
+                            "provider": "pornhub"
+                        })
+            if videos:
+                return videos
+        except Exception as e:
+            logger.error(f"Pornhub yt-dlp search error: {e}")
+
     html_text = ""
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=headers) as client:
         for attempt in range(3):
@@ -67,71 +112,6 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
                 await asyncio.sleep(0.5)
 
     if not html_text:
-        return videos
-
-    if provider == "pornhub":
-        try:
-            tree = lxml_html.fromstring(html_text)
-            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or @data-video-vkey] | //div[contains(@class, "pcVideoListItem") or contains(@class, "videoblock") or contains(@class, "wrap") or contains(@class, "nf-video") or contains(@class, "videoBox")]')
-            
-            seen_ph_vkeys = set()
-            for item in items:
-                vkey_attr = item.get("data-video-vkey") or item.get("data-id")
-                if not vkey_attr:
-                    vkey_list = item.xpath('.//@data-video-vkey | .//@data-id')
-                    if vkey_list:
-                        vkey_attr = vkey_list[0]
-
-                vkey = vkey_attr
-                if not vkey:
-                    hrefs = item.xpath('.//a[contains(@href, "viewkey=") or contains(@href, "/view_video.php") or contains(@href, "/video/")]/@href')
-                    for h in hrefs:
-                        if "viewkey=" in h:
-                            try:
-                                vkey = h.split("viewkey=")[1].split("&")[0]
-                                break
-                            except:
-                                pass
-                        elif "/video/" in h:
-                            parts = [p for p in h.split('/') if p]
-                            if parts:
-                                vkey = parts[-1]
-                                break
-                if not vkey:
-                    raw_html = lxml_html.tostring(item, encoding='unicode')
-                    match_vkey = re.search(r'viewkey=([a-zA-Z0-9]+)', raw_html)
-                    if match_vkey:
-                        vkey = match_vkey.group(1)
-
-                if not vkey or len(vkey) < 5 or vkey in seen_ph_vkeys:
-                    continue
-                
-                seen_ph_vkeys.add(vkey)
-                full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
-
-                title_list = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title | .//span[@class="title"]/text() | .//div[contains(@class,"title")]//text()')
-                title = "Unknown Video"
-                for t in title_list:
-                    if t and t.strip() and not t.strip().isdigit() and len(t.strip()) > 2 and "pornhub" not in t.lower():
-                        title = t.strip()
-                        break
-
-                img_list = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@data-src | .//img/@src | .//img/@data-lazy-src')
-                thumb = ""
-                for im in img_list:
-                    if im and "data:image" not in im and "blank" not in im:
-                        thumb = im
-                        break
-
-                videos.append({
-                    "vkey": vkey,
-                    "title": html_parser.unescape(title),
-                    "thumbnail": thumb,
-                    "url": full_url,
-                    "provider": "pornhub"
-                })
-        except Exception as e:
-            logger.error(f"Pornhub lxml parsing error: {e}")
         return videos
 
     soup = BeautifulSoup(html_text, 'html.parser')
