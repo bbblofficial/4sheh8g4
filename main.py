@@ -344,10 +344,11 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     thumb = ""
                     
                     if container:
-                        t_elems = container[0].xpath('.//a/@title | .//img/@alt | .//p[@class="title"]/text() | .//span[@class="title"]/text() | .//a/text() | .//div[contains(@class,"title")]//text()')
-                        for t in t_elems:
+                        # Extract title safely from card attributes or children elements (avoiding time durations like '23:51')
+                        title_candidates = container[0].xpath('.//@title | .//img/@alt | .//p[contains(@class, "title")]//text() | .//span[contains(@class, "title")]//text() | .//a/text() | .//div[contains(@class,"title")]//text()')
+                        for t in title_candidates:
                             clean_t = t.strip()
-                            if clean_t and len(clean_t) > 2 and not re.match(r'^\d{1,2}:\d{2}(?::\d{2})?$', clean_t) and not clean_t.isdigit() and "youporn" not in clean_t.lower():
+                            if clean_t and len(clean_t) > 3 and not re.match(r'^\d{1,2}:\d{2}(?::\d{2})?$', clean_t) and not clean_t.isdigit() and "youporn" not in clean_t.lower():
                                 title = clean_t
                                 break
                         
