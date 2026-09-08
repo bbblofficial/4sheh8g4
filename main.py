@@ -148,7 +148,7 @@ def extract_with_ytdlp(url: str) -> dict:
     elif "youporn.com" in url:
         provider = "youporn"
 
-    referer_url = f"https://www.{provider}.com/" if provider not in ["xhamster", "redtube", "youporn"] else f"https://www.{provider}.com/"
+    referer_url = f"https://www.{provider}.com/"
 
     ydl_opts = {
         'quiet': True,
@@ -288,7 +288,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;',
-        'Referer': f'https://www.{provider}.com/'
+        'Referer': f'https://www.{provider}.com/' if provider not in ['xhamster'] else 'https://xhamster.com/'
     }
 
     if provider == "xhamster":
@@ -323,10 +323,10 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
             seen_urls = set()
 
             if provider == "redtube":
-                items = tree.xpath('//div[contains(@class, "videoBox")] | //li[contains(@class, "videoblock")] | //div[contains(@class, "video-item")]')
+                items = tree.xpath('//div[contains(@class, "videoBox")] | //li[contains(@class, "videoblock")] | //div[contains(@class, "video-item")] | //div[contains(@class, "pb-card")]')
                 for item in items:
                     link_elems = item.xpath('.//a/@href')
-                    href = next((l for l in link_elems if l and (l.isdigit() or '/' in l)), None)
+                    href = next((l for l in link_elems if l and (any(char.isdigit() for char in l))), None)
                     if not href: continue
                     full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
                     if full_url in seen_urls: continue
@@ -335,8 +335,8 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     vid_parts = [p for p in full_url.split('/') if p]
                     vid_id = vid_parts[-1] if vid_parts else "unknown"
 
-                    title_elems = item.xpath('.//a/@title | .//img/@alt | .//span[@class="title"]/text() | .//a/text()')
-                    title = next((t.strip() for t in title_elems if t and len(t.strip()) > 3), "Unknown Video")
+                    title_elems = item.xpath('.//a/@title | .//img/@alt | .//span[@class="title"]/text() | .//a/text() | .//p/text()')
+                    title = next((t.strip() for t in title_elems if t and len(t.strip()) > 3 and "redtube" not in t.lower()), "Unknown Video")
 
                     raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
                     thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t), "")
@@ -346,7 +346,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     if len(videos) >= 48: break
 
             elif provider == "youporn":
-                items = tree.xpath('//div[contains(@class, "video-box")] | //div[contains(@class, "item")] | //li[contains(@class, "video-tile")]')
+                items = tree.xpath('//div[contains(@class, "video-box")] | //div[contains(@class, "item")] | //li[contains(@class, "video-tile")] | //div[contains(@class, "pb-card")]')
                 for item in items:
                     link_elems = item.xpath('.//a/@href')
                     href = next((l for l in link_elems if l and ('/watch/' in l)), None)
@@ -359,7 +359,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     vid_id = vid_parts[1] if len(vid_parts) > 1 and vid_parts[0] == 'watch' else (vid_parts[-1] if vid_parts else "unknown")
 
                     title_elems = item.xpath('.//a/@title | .//img/@alt | .//p[@class="title"]/text() | .//a/text()')
-                    title = next((t.strip() for t in title_elems if t and len(t.strip()) > 3), "Unknown Video")
+                    title = next((t.strip() for t in title_elems if t and len(t.strip()) > 3 and "youporn" not in t.lower()), "Unknown Video")
 
                     raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
                     thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t), "")
