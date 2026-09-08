@@ -611,7 +611,6 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
             except Exception:
                 await asyncio.sleep(0.5)
     return Response(status_code=502, content="Backend Proxy Error")
-
 @app.get("/proxy-video")
 async def proxy_video(request: Request, url: str):
     target = url.strip()
@@ -638,16 +637,15 @@ async def proxy_video(request: Request, url: str):
                     
             async def stream_generator():
                 try:
-                    async async for chunk in resp.iter_bytes(chunk_size=65536):
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
                         yield chunk
                 finally:
                     await client.aclose()
 
-            return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp.headers)
+            return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp_headers)
     except Exception:
         await client.aclose()
     return Response(status_code=502)
-
 @app.get("/")
 def health():
     return {"status": "Online", "engine": "Fast Edge Extraction Engine"}
