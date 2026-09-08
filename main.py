@@ -95,41 +95,44 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
         'Accept-Language': 'en-US,en;q=0.9',
         'Cookie': 'has_accepted_cookie=1; age_verified=1;'
     }
-    try:
-        import requests
-        resp = requests.get(url, headers=headers, timeout=6)
-        if resp.status_code == 200:
-            html_text = resp.text
-            view_count = 0
-            upload_date = ""
-            poster_url = ""
+    for attempt in range(3):
+        try:
+            import requests
+            resp = requests.get(url, headers=headers, timeout=6)
+            if resp.status_code == 200:
+                html_text = resp.text
+                view_count = 0
+                upload_date = ""
+                poster_url = ""
 
-            view_match = re.search(r'([\d,\.]+)\s*(?:Views|views|Vistas|M views|k views)', html_text)
-            if view_match:
-                raw_views = view_match.group(1).replace(',', '').replace('.', '')
-                if 'k' in view_match.group(0).lower():
-                    view_count = int(float(raw_views.replace('k', '')) * 1000)
-                elif 'm' in view_match.group(0).lower():
-                    view_count = int(float(raw_views.replace('m', '')) * 1000000)
-                else:
-                    view_count = int(raw_views) if raw_views.isdigit() else 0
+                view_match = re.search(r'([\d,\.]+)\s*(?:Views|views|Vistas|M views|k views)', html_text)
+                if view_match:
+                    raw_views = view_match.group(1).replace(',', '').replace('.', '')
+                    if 'k' in view_match.group(0).lower():
+                        view_count = int(float(raw_views.replace('k', '')) * 1000)
+                    elif 'm' in view_match.group(0).lower():
+                        view_count = int(float(raw_views.replace('m', '')) * 1000000)
+                    else:
+                        view_count = int(raw_views) if raw_views.isdigit() else 0
 
-            date_match = re.search(r'(\d{4}-\d{2}-\d{2})|(\d{1,2}\s+[a-zA-Z]+\s+\d{4})', html_text)
-            if date_match:
-                upload_date = date_match.group(0)
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})|(\d{1,2}\s+[a-zA-Z]+\s+\d{4})', html_text)
+                if date_match:
+                    upload_date = date_match.group(0)
 
-            json_thumb = re.search(r'"image_url"\s*:\s*"([^"]+)"', html_text)
-            if json_thumb:
-                poster_url = json_thumb.group(1).replace('\\/', '/')
-            
-            if not poster_url:
-                og_match = re.search(r'<meta property="og:image" content="([^"]+)"', html_text)
-                if og_match:
-                    poster_url = og_match.group(1).replace("&amp;", "&")
+                json_thumb = re.search(r'"image_url"\s*:\s*"([^"]+)"', html_text)
+                if json_thumb:
+                    poster_url = json_thumb.group(1).replace('\\/', '/')
+                
+                if not poster_url:
+                    og_match = re.search(r'<meta property="og:image" content="([^"]+)"', html_text)
+                    if og_match:
+                        poster_url = og_match.group(1).replace("&amp;", "&")
 
-            return {"view_count": view_count, "upload_date": upload_date, "thumbnail": poster_url}
-    except Exception as e:
-        logger.error(f"Metadata fallback scrape error: {e}")
+                return {"view_count": view_count, "upload_date": upload_date, "thumbnail": poster_url}
+        except Exception as e:
+            if attempt == 2:
+                logger.error(f"Metadata fallback scrape error after 3 attempts: {e}")
+            time.sleep(1.0)
     return {"view_count": 0, "upload_date": "", "thumbnail": ""}
 
 def extract_with_ytdlp(url: str) -> dict:
@@ -166,7 +169,7 @@ def extract_with_ytdlp(url: str) -> dict:
         }
     }
 
-    max_retries = 3
+    max_retries = 5
     last_error = "Unknown Error"
 
     for attempt in range(max_retries):
@@ -255,7 +258,7 @@ def extract_with_ytdlp(url: str) -> dict:
             if not qualities:
                 last_error = "No valid streams found"
                 if attempt < max_retries - 1:
-                    time.sleep(1.0)
+                    time.sleep(1.5)
                     continue
                 return {"status": "error", "error": last_error, "url": url}
 
@@ -278,10 +281,10 @@ def extract_with_ytdlp(url: str) -> dict:
         except Exception as e:
             last_error = str(e)
             if attempt < max_retries - 1:
-                time.sleep(1.0)
+                time.sleep(1.5)
                 continue
 
-    return {"status": "error", "error": f"Failed after retries: {last_error}", "url": url}
+    return {"status": "error", "error": f"Failed after {max_retries} retries: {last_error}", "url": url}
 
 @app.get("/api/explore")
 async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub"):
@@ -307,239 +310,248 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
     else:
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
     
-    try:
-        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
-            resp = await client.get(search_url, headers=headers)
-
-            if resp.status_code != 200:
+    max_search_retries = 5
+    resp = None
+    for attempt in range(max_search_retries):
+        try:
+            async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+                resp = await client.get(search_url, headers=headers)
+                if resp.status_code == 200:
+                    break
+        except Exception:
+            if attempt == max_search_retries - 1:
                 if provider == "pornhub":
                     loop = asyncio.get_running_loop()
                     return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
                 return JSONResponse([])
+            await asyncio.sleep(1.0)
 
-            try: html_content = resp.content.decode('utf-8', errors='replace')
-            except Exception: html_content = resp.text
+    if not resp or resp.status_code != 200:
+        if provider == "pornhub":
+            loop = asyncio.get_running_loop()
+            return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
+        return JSONResponse([])
 
-            tree = html.fromstring(html_content)
-            videos = []
-            seen_urls = set()
+    try:
+        try: html_content = resp.content.decode('utf-8', errors='replace')
+        except Exception: html_content = resp.text
 
-            if provider == "pornhub":
-                items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or contains(@class, "videoBox")]')
-                if not items:
-                    items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "pcVideoListItem")]')
+        tree = html.fromstring(html_content)
+        videos = []
+        seen_urls = set()
 
-                for item in items:
-                    vkey = item.get("data-video-vkey") or next(iter(item.xpath('.//@data-video-vkey')), None)
-                    if not vkey:
-                        hrefs = item.xpath('.//a[contains(@href, "viewkey=")]/@href | .//a[contains(@href, "/view_video.php")]/@href | .//a[contains(@href, "/video/")]/@href')
-                        for h in hrefs:
-                            if "viewkey=" in h or "/view_video.php?" in h:
-                                try:
-                                    vkey = h.split("viewkey=")[1].split("&")[0]
-                                    break
-                                except Exception: pass
-                            elif "/video/" in h:
-                                try:
-                                    parts = [p for p in h.split('/') if p]
-                                    if parts:
-                                        vkey = parts[-1]
-                                        break
-                                except Exception: pass
-                    if not vkey: continue
-                    full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
-                    if full_url in seen_urls: continue
-                    seen_urls.add(full_url)
+        if provider == "youporn":
+            # Multi-strategy HTML and container traversal specifically optimized for YouPorn structure & thumbnails
+            cards = tree.xpath('//div[contains(@class, "video-box")] | //div[contains(@class, "pb-card")] | //div[contains(@class, "list-item")] | //li[contains(@class, "video-tile")] | //div[@id="searchResult"]//div[contains(@class, "video")] | //div[contains(@class, "videoBox")]')
+            if not cards:
+                cards = tree.xpath('//a[contains(@href, "/watch/")]')
 
-                    title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title')
-                    title = next((html_parser.unescape(t.strip()) for t in title_elem if t and len(t.strip()) > 3), "")
-                    if not title:
-                        all_txt = item.xpath('.//a//text() | .//span//text()')
-                        title = next((html_parser.unescape(t.strip()) for t in all_txt if t and len(t.strip()) > 3 and "pornhub" not in t.lower()), "Unknown Video")
-
-                    raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@data-src | .//img/@src')
-                    thumb = ""
-                    for t in raw_thumbs:
-                        if t and "data:image" not in t and "blank" not in t and "transparent" not in t and "data:auto" not in t and ".svg" not in t:
-                            thumb = t
-                            break
-
-                    videos.append({"vkey": vkey, "title": title, "thumbnail": thumb, "url": full_url, "provider": "pornhub"})
-                    if len(videos) >= 48: break
-
-                if len(videos) == 0:
-                    loop = asyncio.get_running_loop()
-                    return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
-
-            elif provider == "xhamster":
-                items = tree.xpath('//div[contains(@class, "video-thumb")] | //div[contains(@class, "thumb-list__item")] | //div[contains(@class, "video-container")] | //div[contains(@class, "cell")] | //article | //div[contains(@class, "video-thumb-info")]')
-                for item in items:
-                    link_elems = item.xpath('.//a[contains(@class, "video-thumb__image-container")]/@href | .//a[contains(@class, "thumb-image-container")]/@href | .//a/@href')
-                    href = next((l for l in link_elems if l and ('/videos/' in l or '/movie/' in l)), None)
-                    if not href: continue
-
-                    full_url = href if href.startswith('http') else f"https://xhamster.com{href}"
-                    full_url = full_url.split('?')[0].rstrip('/')
-                    if not re.search(r'/videos?/', full_url) or full_url in seen_urls: continue
-                    seen_urls.add(full_url)
-                    
-                    vid_parts = [p for p in full_url.split('/') if p]
-                    vid_id = vid_parts[-1] if vid_parts else "unknown"
-
-                    title = ""
-                    title_elems = item.xpath('.//a[contains(@class, "video-thumb__title")]/text() | .//a/@title | .//img/@alt | .//h4/text() | .//p/text() | .//a//text()')
-                    for t in title_elems:
-                        clean_t = html_parser.unescape(t.strip())
-                        if clean_t and len(clean_t) > 3 and "results" not in clean_t.lower() and "xhamster" not in clean_t.lower() and not clean_t.isdigit():
-                            title = clean_t
-                            break
-
-                    if not title or title.isdigit():
-                        title = vid_id.replace('-', ' ').title()
-
-                    raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
-                    thumb = ""
-                    for t in raw_thumbs:
-                        if t and "data:image" not in t and "blank" not in t and ".svg" not in t:
-                            thumb = t
-                            break
-                    if not thumb:
-                        # Fallback for dynamic/srcset attributes
-                        srcset = item.xpath('.//img/@srcset')
-                        if srcset:
-                            thumb = srcset[0].split(',')[0].strip().split(' ')[0]
-
-                    videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
-                    if len(videos) >= 48: break
-
-            elif provider == "youporn":
-                all_anchors = tree.xpath('//a[contains(@href, "/watch/")]')
-                for anchor in all_anchors:
-                    href = anchor.get('href')
-                    if not href: continue
+            for card in cards:
+                full_url = ""
+                title = ""
+                thumb = ""
+                
+                if card.tag == 'a':
+                    href = card.get('href')
+                    if not href or '/watch/' not in href: continue
+                    full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
+                    title = card.get('title') or card.text_content().strip() or ""
+                    img_el = card.xpath('.//img')
+                    if img_el:
+                        thumb = img_el[0].get('data-src') or img_el[0].get('src') or img_el[0].get('data-lazy-src') or img_el[0].get('data-image') or ""
+                else:
+                    link_el = card.xpath('.//a[contains(@href, "/watch/")]/@href')
+                    if not link_el: continue
+                    href = link_el[0]
                     full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
                     
-                    full_url = full_url.split('?')[0].rstrip('/')
-                    if not re.search(r'/watch/\d+', full_url) or full_url in seen_urls:
-                        continue
-                    seen_urls.add(full_url)
-
-                    vid_parts = [p for p in full_url.split('/') if p]
-                    vid_id = vid_parts[-1] if vid_parts else "unknown"
-
-                    container = anchor.xpath('./ancestor::div[contains(@class, "video") or contains(@class, "pb-card") or contains(@class, "item") or contains(@class, "tile") or contains(@class, "list-item") or contains(@class, "video-box")][1]')
+                    title_el = card.xpath('.//a[contains(@href, "/watch/")]/@title | .//p[@class="title"]/text() | .//span[contains(@class,"title")]//text() | .//a/text() | .//div[contains(@class,"title")]//text()')
+                    for t in title_el:
+                        clean_t = html_parser.unescape(t.strip())
+                        if clean_t and len(clean_t) > 3 and not re.match(r'^\d{1,2}:\d{2}(?::\d{2})?$', clean_t) and not clean_t.isdigit() and "youporn" not in clean_t.lower():
+                            title = clean_t
+                            break
                     
-                    title = ""
-                    thumb = ""
-                    
-                    if container:
-                        title_candidates = container[0].xpath('.//@title | .//img/@alt | .//p[contains(@class, "title")]//text() | .//span[contains(@class, "title")]//text() | .//a/text() | .//div[contains(@class,"title")]//text()')
-                        for t in title_candidates:
-                            clean_t = html_parser.unescape(t.strip())
-                            if clean_t and len(clean_t) > 3 and not re.match(r'^\d{1,2}:\d{2}(?::\d{2})?$', clean_t) and not clean_t.isdigit() and "youporn" not in clean_t.lower():
-                                title = clean_t
+                    img_el = card.xpath('.//img')
+                    if img_el:
+                        thumb = img_el[0].get('data-src') or img_el[0].get('src') or img_el[0].get('data-lazy-src') or img_el[0].get('data-image') or ""
+
+                full_url = full_url.split('?')[0].rstrip('/')
+                if not full_url or full_url in seen_urls: continue
+                seen_urls.add(full_url)
+
+                vid_parts = [p for p in full_url.split('/') if p]
+                vid_id = vid_parts[1] if len(vid_parts) > 1 and vid_parts[0] == 'watch' else (vid_parts[-1] if vid_parts else "unknown")
+
+                if not title or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title):
+                    title = vid_id.replace('-', ' ').title()
+
+                if not thumb:
+                    img_fallback = card.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
+                    if img_fallback:
+                        thumb = img_fallback[0]
+
+                videos.append({
+                    "vkey": vid_id,
+                    "title": title,
+                    "thumbnail": thumb,
+                    "url": full_url,
+                    "provider": "youporn"
+                })
+                if len(videos) >= 48: break
+
+        elif provider == "pornhub":
+            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or contains(@class, "videoBox")]')
+            if not items:
+                items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "pcVideoListItem")]')
+
+            for item in items:
+                vkey = item.get("data-video-vkey") or next(iter(item.xpath('.//@data-video-vkey')), None)
+                if not vkey:
+                    hrefs = item.xpath('.//a[contains(@href, "viewkey=")]/@href | .//a[contains(@href, "/view_video.php")]/@href | .//a[contains(@href, "/video/")]/@href')
+                    for h in hrefs:
+                        if "viewkey=" in h or "/view_video.php?" in h:
+                            try:
+                                vkey = h.split("viewkey=")[1].split("&")[0]
                                 break
-                        
-                        img_elems = container[0].xpath('.//img')
-                        if img_elems:
-                            thumb = img_elems[0].get('data-src') or img_elems[0].get('src') or img_elems[0].get('data-lazy-src') or img_elems[0].get('data-image') or ""
-                    
-                    if not title or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title):
-                        anchor_title = anchor.get('title') or ""
-                        if anchor_title and len(anchor_title) > 3 and not anchor_title.isdigit() and not re.match(r'^\d{1,2}:\d{2}', anchor_title):
-                            title = anchor_title
-                        else:
-                            text_fallback = anchor.text_content().strip()
-                            if text_fallback and len(text_fallback) > 3 and not text_fallback.isdigit() and not re.match(r'^\d{1,2}:\d{2}', text_fallback):
-                                title = text_fallback
-                            else:
-                                title = vid_id.replace('-', ' ').title()
+                            except Exception: pass
+                        elif "/video/" in h:
+                            try:
+                                parts = [p for p in h.split('/') if p]
+                                if parts:
+                                    vkey = parts[-1]
+                                    break
+                            except Exception: pass
+                if not vkey: continue
+                full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
+                if full_url in seen_urls: continue
+                seen_urls.add(full_url)
 
-                    if not thumb:
-                        img_elems = anchor.xpath('.//img')
-                        if img_elems:
-                            thumb = img_elems[0].get('data-src') or img_elems[0].get('src') or img_elems[0].get('data-lazy-src') or ""
+                title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title')
+                title = next((html_parser.unescape(t.strip()) for t in title_elem if t and len(t.strip()) > 3), "")
+                if not title:
+                    all_txt = item.xpath('.//a//text() | .//span//text()')
+                    title = next((html_parser.unescape(t.strip()) for t in all_txt if t and len(t.strip()) > 3 and "pornhub" not in t.lower()), "Unknown Video")
 
-                    videos.append({
-                        "vkey": vid_id,
-                        "title": title,
-                        "thumbnail": thumb,
-                        "url": full_url,
-                        "provider": "youporn"
-                    })
-                    if len(videos) >= 48: break
+                raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@data-src | .//img/@src')
+                thumb = ""
+                for t in raw_thumbs:
+                    if t and "data:image" not in t and "blank" not in t and "transparent" not in t and "data:auto" not in t and ".svg" not in t:
+                        thumb = t
+                        break
 
-            elif provider == "redtube":
-                items = tree.xpath('//div[contains(@class, "videoBox")] | //li[contains(@class, "videoblock")] | //div[contains(@class, "video-item")] | //div[contains(@class, "pb-card")]')
-                for item in items:
-                    link_elems = item.xpath('.//a/@href')
-                    href = next((l for l in link_elems if l and (any(char.isdigit() for char in l))), None)
-                    if not href: continue
-                    full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
-                    if full_url in seen_urls: continue
-                    seen_urls.add(full_url)
+                videos.append({"vkey": vkey, "title": title, "thumbnail": thumb, "url": full_url, "provider": "pornhub"})
+                if len(videos) >= 48: break
 
-                    vid_parts = [p for p in full_url.split('/') if p]
-                    vid_id = vid_parts[-1] if vid_parts else "unknown"
+            if len(videos) == 0:
+                loop = asyncio.get_running_loop()
+                return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
 
-                    title_elems = item.xpath('.//a/@title | .//img/@alt | .//span[@class="title"]/text() | .//a/text() | .//p/text()')
-                    title = next((html_parser.unescape(t.strip()) for t in title_elems if t and len(t.strip()) > 3 and "redtube" not in t.lower() and not re.match(r'^\d{1,2}:\d{2}', t.strip())), "Unknown Video")
+        elif provider == "xhamster":
+            items = tree.xpath('//div[contains(@class, "video-thumb")] | //div[contains(@class, "thumb-list__item")] | //div[contains(@class, "video-container")] | //div[contains(@class, "cell")] | //article | //div[contains(@class, "video-thumb-info")]')
+            for item in items:
+                link_elems = item.xpath('.//a[contains(@class, "video-thumb__image-container")]/@href | .//a[contains(@class, "thumb-image-container")]/@href | .//a/@href')
+                href = next((l for l in link_elems if l and ('/videos/' in l or '/movie/' in l)), None)
+                if not href: continue
 
-                    raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
-                    thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t), "")
-                    if not thumb and raw_thumbs: thumb = raw_thumbs[0]
+                full_url = href if href.startswith('http') else f"https://xhamster.com{href}"
+                full_url = full_url.split('?')[0].rstrip('/')
+                if not re.search(r'/videos?/', full_url) or full_url in seen_urls: continue
+                seen_urls.add(full_url)
+                
+                vid_parts = [p for p in full_url.split('/') if p]
+                vid_id = vid_parts[-1] if vid_parts else "unknown"
 
-                    videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "redtube"})
-                    if len(videos) >= 48: break
+                title = ""
+                title_elems = item.xpath('.//a[contains(@class, "video-thumb__title")]/text() | .//a/@title | .//img/@alt | .//h4/text() | .//p/text() | .//a//text()')
+                for t in title_elems:
+                    clean_t = html_parser.unescape(t.strip())
+                    if clean_t and len(clean_t) > 3 and "results" not in clean_t.lower() and "xhamster" not in clean_t.lower() and not clean_t.isdigit():
+                        title = clean_t
+                        break
 
-            elif provider == "xnxx":
-                items = tree.xpath('//div[contains(@class, "mozaique")]//div[contains(@class, "thumb-block")]')
-                for item in items:
-                    link_elems = item.xpath('.//div[@class="thumb-under"]//a/@href | .//a[contains(@class, "pure-u")]/@href | .//a/@href')
-                    href = next((l for l in link_elems if l and ('/video-' in l or '/video.' in l)), None)
-                    if not href: continue
-                    full_url = f"https://www.xnxx.com{href}" if href.startswith('/') else href
-                    if full_url in seen_urls: continue
-                    seen_urls.add(full_url)
+                if not title or title.isdigit():
+                    title = vid_id.replace('-', ' ').title()
 
-                    vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
-                    title_elems = item.xpath('.//div[@class="thumb-under"]//a/@title | .//div[@class="thumb-under"]//a/text() | .//a/@title')
-                    title = next((html_parser.unescape(t.strip()) for t in title_elems if t and t.strip()), "Unknown Video")
+                raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
+                thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and ".svg" not in t), "")
+                if not thumb and raw_thumbs:
+                    thumb = next((t for t in raw_thumbs if t and ".svg" not in t), "")
 
-                    raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
-                    thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
-                    if not thumb and raw_thumbs: thumb = raw_thumbs[0]
-                    if not thumb: continue
+                videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
+                if len(videos) >= 48: break
 
-                    videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xnxx"})
-                    if len(videos) >= 48: break
+        elif provider == "redtube":
+            items = tree.xpath('//div[contains(@class, "videoBox")] | //li[contains(@class, "videoblock")] | //div[contains(@class, "video-item")] | //div[contains(@class, "pb-card")]')
+            for item in items:
+                link_elems = item.xpath('.//a/@href')
+                href = next((l for l in link_elems if l and (any(char.isdigit() for char in l))), None)
+                if not href: continue
+                full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
+                if full_url in seen_urls: continue
+                seen_urls.add(full_url)
 
-            elif provider == "xvideos":
-                items = tree.xpath('//div[contains(@class, "mozaique")]//div[contains(@class, "thumb-block")]')
-                for item in items:
-                    link_elems = item.xpath('.//p[@class="title"]//a/@href | .//a/@href')
-                    href = next((l for l in link_elems if l and ('/video.' in l or '/video-' in l)), None)
-                    if not href: continue
-                    vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
-                    clean_href = href.rstrip('/')
-                    if clean_href.endswith('_') or clean_href.endswith('/_') or len(clean_href.split('/')) < 3:
-                        clean_href = f"/{vid_id}/video_stream"
-                    full_url = f"https://www.xvideos.com{clean_href}" if clean_href.startswith('/') else clean_href
-                    if full_url in seen_urls: continue
-                    seen_urls.add(full_url)
+                vid_parts = [p for p in full_url.split('/') if p]
+                vid_id = vid_parts[-1] if vid_parts else "unknown"
 
-                    title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text() | .//a/@title')
-                    title = next((html_parser.unescape(t.strip()) for t in title_elems if t and t.strip()), "Unknown Video")
+                title_elems = item.xpath('.//a/@title | .//img/@alt | .//span[@class="title"]/text() | .//a/text() | .//p/text()')
+                title = next((html_parser.unescape(t.strip()) for t in title_elems if t and len(t.strip()) > 3 and "redtube" not in t.lower() and not re.match(r'^\d{1,2}:\d{2}', t.strip())), "Unknown Video")
 
-                    raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
-                    thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
-                    if not thumb and raw_thumbs: thumb = raw_thumbs[0]
-                    if not thumb: continue
+                raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
+                thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t), "")
+                if not thumb and raw_thumbs: thumb = raw_thumbs[0]
 
-                    videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xvideos"})
-                    if len(videos) >= 48: break
+                videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "redtube"})
+                if len(videos) >= 48: break
 
-            return JSONResponse(videos)
+        elif provider == "xnxx":
+            items = tree.xpath('//div[contains(@class, "mozaique")]//div[contains(@class, "thumb-block")]')
+            for item in items:
+                link_elems = item.xpath('.//div[@class="thumb-under"]//a/@href | .//a[contains(@class, "pure-u")]/@href | .//a/@href')
+                href = next((l for l in link_elems if l and ('/video-' in l or '/video.' in l)), None)
+                if not href: continue
+                full_url = f"https://www.xnxx.com{href}" if href.startswith('/') else href
+                if full_url in seen_urls: continue
+                seen_urls.add(full_url)
+
+                vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
+                title_elems = item.xpath('.//div[@class="thumb-under"]//a/@title | .//div[@class="thumb-under"]//a/text() | .//a/@title')
+                title = next((html_parser.unescape(t.strip()) for t in title_elems if t and t.strip()), "Unknown Video")
+
+                raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
+                thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
+                if not thumb and raw_thumbs: thumb = raw_thumbs[0]
+                if not thumb: continue
+
+                videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xnxx"})
+                if len(videos) >= 48: break
+
+        elif provider == "xvideos":
+            items = tree.xpath('//div[contains(@class, "mozaique")]//div[contains(@class, "thumb-block")]')
+            for item in items:
+                link_elems = item.xpath('.//p[@class="title"]//a/@href | .//a/@href')
+                href = next((l for l in link_elems if l and ('/video.' in l or '/video-' in l)), None)
+                if not href: continue
+                vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
+                clean_href = href.rstrip('/')
+                if clean_href.endswith('_') or clean_href.endswith('/_') or len(clean_href.split('/')) < 3:
+                    clean_href = f"/{vid_id}/video_stream"
+                full_url = f"https://www.xvideos.com{clean_href}" if clean_href.startswith('/') else clean_href
+                if full_url in seen_urls: continue
+                seen_urls.add(full_url)
+
+                title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text() | .//a/@title')
+                title = next((html_parser.unescape(t.strip()) for t in title_elems if t and t.strip()), "Unknown Video")
+
+                raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
+                thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
+                if not thumb and raw_thumbs: thumb = raw_thumbs[0]
+                if not thumb: continue
+
+                videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xvideos"})
+                if len(videos) >= 48: break
+
+        return JSONResponse(videos)
 
     except Exception as e:
         logger.error(f"Explore error: {e}")
@@ -568,23 +580,25 @@ async def fallback_proxy_image(url: str):
         'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
     }
     
-    try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            req = await client.get(target, headers=headers)
-            if req.status_code != 200:
-                return Response(status_code=req.status_code, content=f"Image CDN Error: {req.status_code}")
-                
-            return StreamingResponse(
-                (chunk async for chunk in req.aiter_bytes()),
-                status_code=req.status_code,
-                headers={
-                    "Content-Type": req.headers.get("Content-Type", "image/jpeg"),
-                    "Access-Control-Allow-Origin": "*",
-                    "Cache-Control": "public, max-age=86400"
-                }
-            )
-    except Exception:
-        return Response(status_code=404)
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                req = await client.get(target, headers=headers)
+                if req.status_code == 200:
+                    return StreamingResponse(
+                        (chunk async for chunk in req.aiter_bytes()),
+                        status_code=req.status_code,
+                        headers={
+                            "Content-Type": req.headers.get("Content-Type", "image/jpeg"),
+                            "Access-Control-Allow-Origin": "*",
+                            "Cache-Control": "public, max-age=86400"
+                        }
+                    )
+        except Exception:
+            if attempt == 2:
+                break
+            await asyncio.sleep(0.5)
+    return Response(status_code=404)
 
 @app.get("/proxy-m3u8")
 async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", request_host: str = ""):
@@ -595,44 +609,46 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
         "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
     }
     
-    try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            resp = await client.get(target, headers=headers)
-            if resp.status_code != 200:
-                return Response(status_code=resp.status_code, content=f"CDN Error: {resp.status_code}")
-                
-            base_url = target.rsplit('/', 1)[0] + '/'
-            proto = request.headers.get("x-forwarded-proto", "https")
-            if not request_host:
-                request_host = request.headers.get("host", "")
-            
-            lines = resp.text.split('\n')
-            rewritten = []
-            for line in lines:
-                line = line.strip()
-                if not line: continue
-                if line.startswith('#'):
-                    if 'URI=' in line:
-                        match = re.search(r'URI="([^"]+)"', line)
-                        if match:
-                            uri = match.group(1)
-                            abs_uri = uri if uri.startswith('http') else base_url + uri
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                resp = await client.get(target, headers=headers)
+                if resp.status_code == 200:
+                    base_url = target.rsplit('/', 1)[0] + '/'
+                    proto = request.headers.get("x-forwarded-proto", "https")
+                    if not request_host:
+                        request_host = request.headers.get("host", "")
+                    
+                    lines = resp.text.split('\n')
+                    rewritten = []
+                    for line in lines:
+                        line = line.strip()
+                        if not line: continue
+                        if line.startswith('#'):
+                            if 'URI=' in line:
+                                match = re.search(r'URI="([^"]+)"', line)
+                                if match:
+                                    uri = match.group(1)
+                                    abs_uri = uri if uri.startswith('http') else base_url + uri
+                                    next_endpoint = "/proxy-m3u8" if ".m3u8" in abs_uri else "/proxy-video"
+                                    new_uri = f"{proto}://{request_host}{next_endpoint}?url={quote(abs_uri)}&sig={sig}&exp={exp}&request_host={request_host}"
+                                    line = line.replace(f'URI="{uri}"', f'URI="{new_uri}"')
+                            rewritten.append(line)
+                        else:
+                            abs_uri = line if line.startswith('http') else base_url + line
                             next_endpoint = "/proxy-m3u8" if ".m3u8" in abs_uri else "/proxy-video"
                             new_uri = f"{proto}://{request_host}{next_endpoint}?url={quote(abs_uri)}&sig={sig}&exp={exp}&request_host={request_host}"
-                            line = line.replace(f'URI="{uri}"', f'URI="{new_uri}"')
-                    rewritten.append(line)
-                else:
-                    abs_uri = line if line.startswith('http') else base_url + line
-                    next_endpoint = "/proxy-m3u8" if ".m3u8" in abs_uri else "/proxy-video"
-                    new_uri = f"{proto}://{request_host}{next_endpoint}?url={quote(abs_uri)}&sig={sig}&exp={exp}&request_host={request_host}"
-                    rewritten.append(new_uri)
-                    
-            return Response(content="\n".join(rewritten), media_type="application/vnd.apple.mpegurl", headers={
-                "Access-Control-Allow-Origin": "*",
-                "Cache-Control": "no-cache, no-store"
-            })
-    except Exception as e:
-        return Response(status_code=502, content="Backend Proxy Error")
+                            rewritten.append(new_uri)
+                            
+                    return Response(content="\n".join(rewritten), media_type="application/vnd.apple.mpegurl", headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Cache-Control": "no-cache, no-store"
+                    })
+        except Exception:
+            if attempt == 2:
+                break
+            await asyncio.sleep(0.5)
+    return Response(status_code=502, content="Backend Proxy Error")
 
 @app.get("/proxy-video")
 async def proxy_video(request: Request, url: str):
@@ -645,29 +661,33 @@ async def proxy_video(request: Request, url: str):
     if "range" in request.headers:
         headers["Range"] = request.headers["range"]
         
-    try:
-        client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
-        req = client.build_request("GET", target, headers=headers)
-        resp = await client.send(req, stream=True)
-        
-        resp_headers = {
-            "Access-Control-Allow-Origin": "*",
-            "Accept-Ranges": "bytes"
-        }
-        for k in ["Content-Type", "Content-Length", "Content-Range"]:
-            if k in resp.headers:
-                resp_headers[k] = resp.headers[k]
-                
-        async def stream_generator():
-            try:
-                async for chunk in resp.aiter_bytes(chunk_size=65536):
-                    yield chunk
-            finally:
-                await client.aclose()
+    for attempt in range(3):
+        try:
+            client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
+            req = client.build_request("GET", target, headers=headers)
+            resp = await client.send(req, stream=True)
+            if resp.status_code in [200, 206]:
+                resp_headers = {
+                    "Access-Control-Allow-Origin": "*",
+                    "Accept-Ranges": "bytes"
+                }
+                for k in ["Content-Type", "Content-Length", "Content-Range"]:
+                    if k in resp.headers:
+                        resp_headers[k] = resp.headers[k]
+                        
+                async def stream_generator():
+                    try:
+                        async for chunk in resp.aiter_bytes(chunk_size=65536):
+                            yield chunk
+                    finally:
+                        await client.aclose()
 
-        return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp_headers)
-    except Exception as e:
-        return Response(status_code=502)
+                return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp_headers)
+        except Exception:
+            if attempt == 2:
+                break
+            await asyncio.sleep(0.5)
+    return Response(status_code=502)
 
 @app.get("/")
 def health():
