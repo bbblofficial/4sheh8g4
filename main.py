@@ -19,7 +19,6 @@ from cachetools import TTLCache
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# Cache search and extraction results to avoid redundant slow requests
 search_cache = TTLCache(maxsize=1000, ttl=1800)
 extraction_cache = TTLCache(maxsize=2000, ttl=7200)
 thread_pool = ThreadPoolExecutor(max_workers=100)
@@ -66,7 +65,6 @@ def search_provider_robust(provider: str, q: str, page: int):
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
         headers['Referer'] = 'https://www.pornhub.com/'
 
-    # Optimized single-attempt or fast-retry execution instead of 5 heavy blocking loops
     try:
         import requests
         resp = requests.get(search_url, headers=headers, timeout=6)
@@ -277,7 +275,6 @@ def search_provider_robust(provider: str, q: str, page: int):
     except Exception as e:
         logger.error(f"Search provider HTML parsing error for {provider}: {e}")
 
-    # If HTML scraper didn't return items, fast yt-dlp fallback runs once
     if not videos:
         try:
             ydl_opts = {'quiet': True, 'extract_flat': True, 'nocheckcertificate': True, 'http_headers': headers}
@@ -627,7 +624,7 @@ async def proxy_video(request: Request, url: str):
                     
             async def stream_generator():
                 try:
-                    async async for chunk in resp.aiter_bytes(chunk_size=65536):
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
                         yield chunk
                 finally:
                     await client.aclose()
