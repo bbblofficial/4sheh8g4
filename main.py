@@ -68,8 +68,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
 
     if not html_text:
         return videos
-
-    if provider == "pornhub":
+elif provider == "pornhub":
         try:
             tree = lxml_html.fromstring(html_text)
             items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or @data-video-vkey] | //div[contains(@class, "pcVideoListItem") or contains(@class, "videoblock")]')
