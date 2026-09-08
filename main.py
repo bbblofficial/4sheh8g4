@@ -323,7 +323,9 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     if not href: continue
 
                     full_url = href if href.startswith('http') else f"https://xhamster.com{href}"
-                    if full_url in seen_urls:
+                    
+                    # Strict validation to filter out non-video links (channels, creators, shorts, tags, playlists, etc.)
+                    if not re.search(r'/videos?/', full_url) or full_url in seen_urls:
                         continue
                     seen_urls.add(full_url)
                     
@@ -332,13 +334,19 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 
                     title_elems = item.xpath('.//a[contains(@class, "video-thumb__title")]/text() | .//a/@title | .//img/@alt')
                     title = next((t.strip() for t in title_elems if t and len(t.strip()) > 2), "")
-                    if not title:
-                        all_texts = item.xpath('.//a//text()')
-                        title = next((t.strip() for t in all_texts if t and len(t.strip()) > 3), "Unknown Video")
+                    if not title or title.upper() == "UNKNOWN VIDEO":
+                        all_texts = item.xpath('.//a//text() | .//span//text()')
+                        title = next((t.strip() for t in all_texts if t and len(t.strip()) > 3 and "unknown" not in t.lower()), "")
+                    
+                    if not title or title.upper() == "UNKNOWN VIDEO":
+                        continue
 
                     raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
                     thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t), "")
                     if not thumb and raw_thumbs: thumb = raw_thumbs[0]
+                    
+                    if not thumb:
+                        continue
 
                     videos.append({
                         "vkey": vid_id,
@@ -362,10 +370,13 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
                     title_elems = item.xpath('.//div[@class="thumb-under"]//a/@title | .//div[@class="thumb-under"]//a/text() | .//a/@title')
                     title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
+                    if not title or title.upper() == "UNKNOWN VIDEO": continue
+
                     raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
                     thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
                     if not thumb and raw_thumbs: thumb = raw_thumbs[0]
                     if not thumb: continue
+                    
                     videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xnxx"})
                     if len(videos) >= 24: break
 
@@ -385,10 +396,13 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 
                     title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text() | .//a/@title')
                     title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
+                    if not title or title.upper() == "UNKNOWN VIDEO": continue
+
                     raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
                     thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
                     if not thumb and raw_thumbs: thumb = raw_thumbs[0]
                     if not thumb: continue
+
                     videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xvideos"})
                     if len(videos) >= 24: break
             else:
@@ -420,6 +434,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 
                     title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title')
                     title = next((t.strip() for t in title_elem if t and len(t.strip()) > 3), "Unknown Video")
+                    if not title or title.upper() == "UNKNOWN VIDEO": continue
 
                     raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@data-src | .//img/@src')
                     thumb = ""
@@ -427,6 +442,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                         if t and "data:image" not in t and "blank" not in t and "transparent" not in t and "data:auto" not in t:
                             thumb = t
                             break
+                    if not thumb: continue
 
                     videos.append({
                         "vkey": vkey,
