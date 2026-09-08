@@ -316,14 +316,13 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                 
                 for item in items:
                     link_elems = item.xpath('.//a[contains(@class, "video-thumb__image-container")]/@href | .//a[contains(@class, "thumb-image-container")]/@href | .//a/@href')
-                    href = next((l for l in link_elems if l and '/videos/' in l), None)
+                    href = next((l for l in link_elems if l and ('/videos/' in l or '/movie/' in l)), None)
                     if not href:
                         href = next((l for l in link_elems if l and ('http' in l or '/' in l)), None)
                     if not href: continue
 
                     full_url = href if href.startswith('http') else f"https://xhamster.com{href}"
                     
-                    # Extract video ID from path
                     vid_parts = [p for p in full_url.split('/') if p]
                     vid_id = vid_parts[-1] if vid_parts else "unknown"
 
