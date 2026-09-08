@@ -285,10 +285,10 @@ def extract_with_ytdlp(url: str) -> dict:
 @app.get("/api/explore")
 async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub"):
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc; yp_access_confirmed=1;',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cookie': 'accessAgeConfirmed=1; has_accepted_cookie=1; age_verified=1; platform=pc; yp_access_confirmed=1;',
         'Referer': f'https://www.{provider}.com/' if provider not in ['xhamster'] else 'https://xhamster.com/'
     }
 
@@ -324,7 +324,8 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
             seen_urls = set()
 
             if provider == "youporn":
-                cards = tree.xpath('//div[contains(@class, "video-box")] | //div[contains(@class, "pb-card")] | //div[contains(@class, "list-item")] | //li[contains(@class, "video-tile")] | //div[@id="searchResult"]//div[contains(@class, "video")] | //div[contains(@class, "videoBox")]')
+                # Universal XPath collection targeting all possible container formats used across YouPorn search layouts
+                cards = tree.xpath('//div[contains(@class, "video-box")] | //div[contains(@class, "pb-card")] | //div[contains(@class, "list-item")] | //li[contains(@class, "video-tile")] | //div[@id="searchResult"]//div[contains(@class, "video")] | //div[contains(@class, "videoBox")] | //div[contains(@class, "wrapper")]//div[contains(@class, "video")]')
                 if not cards:
                     cards = tree.xpath('//a[contains(@href, "/watch/")]')
 
@@ -340,19 +341,19 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                         title = card.text_content().strip() or card.get('title') or ""
                         img_el = card.xpath('.//img')
                         if img_el:
-                            thumb = img_el[0].get('data-src') or img_el[0].get('src') or img_el[0].get('data-lazy-src') or ""
+                            thumb = img_el[0].get('data-src') or img_el[0].get('src') or img_el[0].get('data-lazy-src') or img_el[0].get('data-image') or ""
                     else:
                         link_el = card.xpath('.//a[contains(@href, "/watch/")]/@href')
                         if not link_el: continue
                         href = link_el[0]
                         full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
                         
-                        title_el = card.xpath('.//a[contains(@href, "/watch/")]/@title | .//p[@class="title"]/text() | .//a/text() | .//div[contains(@class,"title")]//text()')
-                        title = next((t.strip() for t in title_el if t and len(t.strip()) > 3 and "youporn" not in t.lower()), "Unknown Video")
+                        title_el = card.xpath('.//a[contains(@href, "/watch/")]/@title | .//p[@class="title"]/text() | .//a/text() | .//div[contains(@class,"title")]//text() | .//span[contains(@class,"title")]//text()')
+                        title = next((t.strip() for t in title_el if t and len(t.strip()) > 3 and "youporn" not in t.lower()), "")
                         
                         img_el = card.xpath('.//img')
                         if img_el:
-                            thumb = img_el[0].get('data-src') or img_el[0].get('src') or img_el[0].get('data-lazy-src') or ""
+                            thumb = img_el[0].get('data-src') or img_el[0].get('src') or img_el[0].get('data-lazy-src') or img_el[0].get('data-image') or ""
 
                     if not full_url or full_url in seen_urls: continue
                     seen_urls.add(full_url)
@@ -606,7 +607,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
         return Response(status_code=502, content="Backend Proxy Error")
 
 @app.get("/proxy-video")
-async def proxy_video(request: Request, url: str):
+async def proxy_video(request: Request, url: str, request_host: str = ""):
     target = url.strip()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
