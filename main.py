@@ -60,6 +60,7 @@ def search_provider_robust(provider: str, q: str, page: int):
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
         headers['Referer'] = 'https://www.pornhub.com/'
 
+    # Method 1: BeautifulSoup HTML Scraping with 5 Multi-Attempts
     for attempt in range(5):
         try:
             import requests
@@ -86,7 +87,9 @@ def search_provider_robust(provider: str, q: str, page: int):
                             
                             img_tag = item.select_one('img')
                             if img_tag:
-                                thumb = img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or img_tag.get('data-poster') or ""
+                                thumb = (img_tag.get('data-src') or img_tag.get('src') or 
+                                         img_tag.get('data-lazy-src') or img_tag.get('data-image') or 
+                                         img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
                         else:
                             a_tag = item.select_one('a[href*="/watch/"]')
                             if not a_tag: continue
@@ -98,7 +101,9 @@ def search_provider_robust(provider: str, q: str, page: int):
                             
                             img_tag = item.select_one('img')
                             if img_tag:
-                                thumb = img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or img_tag.get('data-poster') or ""
+                                thumb = (img_tag.get('data-src') or img_tag.get('src') or 
+                                         img_tag.get('data-lazy-src') or img_tag.get('data-image') or 
+                                         img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
 
                         full_url = full_url.split('?')[0].rstrip('/')
                         if not full_url or full_url in seen: continue
@@ -176,8 +181,8 @@ def search_provider_robust(provider: str, q: str, page: int):
                             thumb = (img_tag.get('data-src') or img_tag.get('src') or 
                                      img_tag.get('data-lazy-src') or img_tag.get('data-thumb') or 
                                      img_tag.get('data-image') or "")
-                        if not thumb:
-                            srcset = img_tag.get('srcset') if img_tag else ""
+                        if not thumb and img_tag:
+                            srcset = img_tag.get('srcset', '')
                             if srcset:
                                 thumb = srcset.split(',')[0].strip().split(' ')[0]
 
@@ -191,6 +196,8 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if not a_tag: continue
                         href = a_tag.get('href', '')
                         if not href or ('/' not in href and not any(char.isdigit() for char in href)): continue
+                        if 'search=' in href or '/channels/' in href or '/hot' in href: continue
+                        
                         full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
                         if full_url in seen: continue
                         seen.add(full_url)
@@ -200,11 +207,14 @@ def search_provider_robust(provider: str, q: str, page: int):
 
                         title_tag = item.select_one('a[title], span.title, a, p, h3, h4')
                         title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
+                        if title.isdigit() or len(title) <= 2:
+                            continue
 
                         img_tag = item.select_one('img')
                         thumb = ""
                         if img_tag:
-                            thumb = img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or ""
+                            thumb = (img_tag.get('data-src') or img_tag.get('src') or 
+                                     img_tag.get('data-lazy-src') or img_tag.get('data-image') or "")
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "redtube"})
                         if len(videos) >= 48: break
@@ -258,7 +268,7 @@ def search_provider_robust(provider: str, q: str, page: int):
             logger.error(f"Search provider {provider} attempt {attempt+1} error: {e}")
             time.sleep(1.0)
 
-    # yt-dlp flat fallback search if BS4 returns empty
+    # Method 2: yt-dlp Flat Extraction Fallback
     try:
         ydl_opts = {'quiet': True, 'extract_flat': True, 'nocheckcertificate': True, 'http_headers': headers}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -273,6 +283,9 @@ def search_provider_robust(provider: str, q: str, page: int):
                         vkey = parts[1] if len(parts) > 1 and parts[0] == 'watch' else (parts[-1] if parts else "")
                     elif not vkey and 'viewkey=' in url:
                         vkey = url.split('viewkey=')[1].split('&')[0]
+                    elif not vkey and any(d in url for d in ['videos/', 'video-']):
+                        parts = [p for p in url.split('/') if p]
+                        vkey = parts[-1] if parts else ""
                     if not vkey: continue
 
                     title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
