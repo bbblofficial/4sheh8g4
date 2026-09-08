@@ -353,19 +353,21 @@ async def search_provider_robust(provider: str, q: str, page: int):
         except Exception as e:
             logger.error(f"yt-dlp flat fallback search error for {provider}: {e}")
 
+    seen_vkeys = set()
     seen_urls = set()
-    seen_titles = set()
     unique_videos = []
     
     for v in raw_videos:
+        vk = str(v.get("vkey", "")).strip()
         u = v.get("url", "").split('?')[0].rstrip('/')
-        t = v.get("title", "").strip().lower()
-        if not u or not t:
+        if not vk and not u:
             continue
-        if u in seen_urls or t in seen_titles:
+        if vk in seen_vkeys or u in seen_urls:
             continue
-        seen_urls.add(u)
-        seen_titles.add(t)
+        if vk:
+            seen_vkeys.add(vk)
+        if u:
+            seen_urls.add(u)
         unique_videos.append(v)
 
     search_cache[cache_key] = unique_videos
