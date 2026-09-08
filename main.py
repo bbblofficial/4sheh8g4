@@ -95,10 +95,10 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
         'Accept-Language': 'en-US,en;q=0.9',
         'Cookie': 'has_accepted_cookie=1; age_verified=1;'
     }
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             import requests
-            resp = requests.get(url, headers=headers, timeout=6)
+            resp = requests.get(url, headers=headers, timeout=8)
             if resp.status_code == 200:
                 html_text = resp.text
                 view_count = 0
@@ -128,10 +128,11 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                     if og_match:
                         poster_url = og_match.group(1).replace("&amp;", "&")
 
-                return {"view_count": view_count, "upload_date": upload_date, "thumbnail": poster_url}
+                if poster_url:
+                    return {"view_count": view_count, "upload_date": upload_date, "thumbnail": poster_url}
         except Exception as e:
-            if attempt == 2:
-                logger.error(f"Metadata fallback scrape error after 3 attempts: {e}")
+            if attempt == 4:
+                logger.error(f"Metadata fallback scrape error after 5 attempts: {e}")
             time.sleep(1.0)
     return {"view_count": 0, "upload_date": "", "thumbnail": ""}
 
@@ -341,7 +342,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         seen_urls = set()
 
         if provider == "youporn":
-            # Multi-strategy HTML and container traversal specifically optimized for YouPorn structure & thumbnails
             cards = tree.xpath('//div[contains(@class, "video-box")] | //div[contains(@class, "pb-card")] | //div[contains(@class, "list-item")] | //li[contains(@class, "video-tile")] | //div[@id="searchResult"]//div[contains(@class, "video")] | //div[contains(@class, "videoBox")]')
             if not cards:
                 cards = tree.xpath('//a[contains(@href, "/watch/")]')
@@ -356,9 +356,13 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     if not href or '/watch/' not in href: continue
                     full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
                     title = card.get('title') or card.text_content().strip() or ""
-                    img_el = card.xpath('.//img')
-                    if img_el:
-                        thumb = img_el[0].get('data-src') or img_el[0].get('src') or img_el[0].get('data-lazy-src') or img_el[0].get('data-image') or ""
+                    
+                    # Robust multi-attribute thumbnail scraping for YouPorn anchors
+                    thumb = card.get('data-src') or card.get('data-image') or card.get('data-thumb') or ""
+                    if not thumb:
+                        img_el = card.xpath('.//img')
+                        if img_el:
+                            thumb = img_el[0].get('data-src') or img_el[0].get('src') or img_el[0].get('data-lazy-src') or img_el[0].get('data-image') or img_el[0].get('data-thumb') or ""
                 else:
                     link_el = card.xpath('.//a[contains(@href, "/watch/")]/@href')
                     if not link_el: continue
@@ -374,7 +378,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     
                     img_el = card.xpath('.//img')
                     if img_el:
-                        thumb = img_el[0].get('data-src') or img_el[0].get('src') or img_el[0].get('data-lazy-src') or img_el[0].get('data-image') or ""
+                        thumb = img_el[0].get('data-src') or img_el[0].get('src') or img_el[0].get('data-lazy-src') or img_el[0].get('data-image') or img_el[0].get('data-thumb') or ""
 
                 full_url = full_url.split('?')[0].rstrip('/')
                 if not full_url or full_url in seen_urls: continue
@@ -387,7 +391,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     title = vid_id.replace('-', ' ').title()
 
                 if not thumb:
-                    img_fallback = card.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
+                    img_fallback = card.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src | .//img/@data-image | .//img/@data-thumb | .//@data-poster')
                     if img_fallback:
                         thumb = img_fallback[0]
 
@@ -412,7 +416,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     for h in hrefs:
                         if "viewkey=" in h or "/view_video.php?" in h:
                             try:
-                                vkey = h.split("viewkey=")[1].split("&")[0]
+                                vkey = h.split("viewkey=")[1].split('&')[0]
                                 break
                             except Exception: pass
                         elif "/video/" in h:
@@ -433,7 +437,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     all_txt = item.xpath('.//a//text() | .//span//text()')
                     title = next((html_parser.unescape(t.strip()) for t in all_txt if t and len(t.strip()) > 3 and "pornhub" not in t.lower()), "Unknown Video")
 
-                raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@data-src | .//img/@src')
+                raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@data-src | .//img/@src | .//img/@data-lazy-src')
                 thumb = ""
                 for t in raw_thumbs:
                     if t and "data:image" not in t and "blank" not in t and "transparent" not in t and "data:auto" not in t and ".svg" not in t:
@@ -580,7 +584,7 @@ async def fallback_proxy_image(url: str):
         'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
     }
     
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 req = await client.get(target, headers=headers)
@@ -595,9 +599,9 @@ async def fallback_proxy_image(url: str):
                         }
                     )
         except Exception:
-            if attempt == 2:
+            if attempt == 4:
                 break
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1.0)
     return Response(status_code=404)
 
 @app.get("/proxy-m3u8")
@@ -609,7 +613,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
         "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
     }
     
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 resp = await client.get(target, headers=headers)
@@ -645,9 +649,9 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                         "Cache-Control": "no-cache, no-store"
                     })
         except Exception:
-            if attempt == 2:
+            if attempt == 4:
                 break
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1.0)
     return Response(status_code=502, content="Backend Proxy Error")
 
 @app.get("/proxy-video")
@@ -661,7 +665,7 @@ async def proxy_video(request: Request, url: str):
     if "range" in request.headers:
         headers["Range"] = request.headers["range"]
         
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
             req = client.build_request("GET", target, headers=headers)
@@ -684,9 +688,9 @@ async def proxy_video(request: Request, url: str):
 
                 return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp_headers)
         except Exception:
-            if attempt == 2:
+            if attempt == 4:
                 break
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1.0)
     return Response(status_code=502)
 
 @app.get("/")
