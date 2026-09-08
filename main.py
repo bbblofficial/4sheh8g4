@@ -117,7 +117,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
             })
 
     elif provider == "pornhub":
-        items = soup.select('li.videoblock, li.pcVideoListItem, li.js-pop, li.videoBox, ul#videoSearchResult li, div.search-video-list li, div.wrap, div.phimage, li[data-video-vkey], div.videoUList li')
+        items = soup.select('li.videoblock, li.pcVideoListItem, li.js-pop, li.videoBox, ul#videoSearchResult li, div.search-video-list li, div.wrap, div.phimage, li[data-video-vkey], div.videoUList li, ul.videos li')
         if not items:
             items = soup.select('ul.videos.row li, li')
         for item in items:
@@ -313,15 +313,15 @@ async def search_provider_robust(provider: str, q: str, page: int):
         'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc; yp_access_confirmed=1; accessAgeConfirmed=1;'
     }
 
-    raw_videos = await fetch_page_videos(provider, q, page, headers)
-    
+    raw_videos = []
     current_page = page
-    while len(raw_videos) < 40 and current_page < page + 5:
-        current_page += 1
-        more_videos = await fetch_page_videos(provider, q, current_page, headers)
-        if not more_videos:
+    
+    while len(raw_videos) < 20 and current_page < page + 5:
+        page_videos = await fetch_page_videos(provider, q, current_page, headers)
+        if not page_videos:
             break
-        raw_videos.extend(more_videos)
+        raw_videos.extend(page_videos)
+        current_page += 1
 
     if not raw_videos:
         try:
