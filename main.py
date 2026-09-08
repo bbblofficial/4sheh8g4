@@ -72,14 +72,16 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
     if provider == "pornhub":
         try:
             tree = lxml_html.fromstring(html_text)
-            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or @data-video-vkey]')
+            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or @data-video-vkey] | //div[contains(@class, "pcVideoListItem") or contains(@class, "videoblock")]')
+            
+            seen_ph_vkeys = set()
             for item in items:
                 vkey_attr = item.get("data-video-vkey")
                 if not vkey_attr:
                     vkey_list = item.xpath('.//@data-video-vkey')
                     if vkey_list:
                         vkey_attr = vkey_list[0]
-                
+
                 vkey = vkey_attr
                 if not vkey:
                     hrefs = item.xpath('.//a[contains(@href, "viewkey=") or contains(@href, "/view_video.php") or contains(@href, "/video/")]/@href')
@@ -101,12 +103,13 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
                     if match_vkey:
                         vkey = match_vkey.group(1)
 
-                if not vkey or len(vkey) < 10:
+                if not vkey or len(vkey) < 10 or vkey in seen_ph_vkeys:
                     continue
-
+                
+                seen_ph_vkeys.add(vkey)
                 full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
 
-                title_list = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title')
+                title_list = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title | .//span[@class="title"]/text()')
                 title = "Unknown Video"
                 for t in title_list:
                     if t and t.strip() and not t.strip().isdigit() and len(t.strip()) > 2:
@@ -186,7 +189,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
             href = a_tag.get('href', '')
             full_url = href if href.startswith('http') else f"https://xhamster.com{href}"
             full_url = full_url.split('?')[0].rstrip('/')
-            
+
             vid_parts = [p for p in full_url.split('/') if p]
             vid_id = vid_parts[-1] if vid_parts else "unknown"
 
@@ -253,7 +256,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
             href = a_tag.get('href', '')
             if not href or ('/' not in href and not any(char.isdigit() for char in href)): continue
             if 'search=' in href or '/channels/' in href or '/hot' in href: continue
-            
+
             full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
 
             vid_parts = [p for p in full_url.split('/') if p]
@@ -263,7 +266,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
             title = ""
             if title_tag:
                 title = title_tag.get('title') or title_tag.get_text(strip=True)
-            
+
             if not title or title == vid_id or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title) or 'redtube' in title.lower():
                 alt_title = a_tag.get('title', '')
                 if alt_title and alt_title != vid_id and not alt_title.isdigit() and not re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', alt_title):
@@ -335,7 +338,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
 
     raw_videos = []
     current_page = page
-    
+
     while len(raw_videos) < 20 and current_page < page + 5:
         page_videos = await fetch_page_videos(provider, q, current_page, headers)
         if not page_videos:
@@ -391,7 +394,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
     seen_vkeys = set()
     seen_urls = set()
     unique_videos = []
-    
+
     for v in raw_videos:
         vk = str(v.get("vkey", "")).strip()
         u = v.get("url", "").split('?')[0].rstrip('/')
@@ -521,7 +524,7 @@ def extract_with_ytdlp(url: str) -> dict:
             view_count = info.get('view_count', 0)
 
             extra_meta = parse_metadata_fallback(url, provider)
-            
+
             if not title or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title) or (len(title) <= 8 and title.isalnum()):
                 if extra_meta.get("title"):
                     title = extra_meta.get("title")
@@ -530,7 +533,7 @@ def extract_with_ytdlp(url: str) -> dict:
 
             view_count = view_count or extra_meta.get("view_count", 0)
             upload_date = upload_date or extra_meta.get("upload_date", "")
-            
+
             all_thumbs = []
             safe_thumb = extra_meta.get("thumbnail", "")
             if safe_thumb and not safe_thumb.startswith("data:image"):
@@ -544,7 +547,7 @@ def extract_with_ytdlp(url: str) -> dict:
                     all_thumbs.append(t.get('url'))
 
             clean_thumbs = [t for t in all_thumbs if 'hash=' not in t and 'validto=' not in t and 'hdnea=' not in t and 'svg' not in t and 'logo.jpg' not in t]
-            
+
             if clean_thumbs:
                 thumbnail = clean_thumbs[0]
                 thumbnails = clean_thumbs
@@ -557,7 +560,7 @@ def extract_with_ytdlp(url: str) -> dict:
                 f_url = f.get('url', '')
                 if not f_url: continue
                 if f.get('vcodec') == 'none': continue
-                
+
                 protocol = str(f.get('protocol', '')).lower()
                 ext = str(f.get('ext', '')).lower()
                 format_id = str(f.get('format_id', '')).lower()
@@ -566,7 +569,7 @@ def extract_with_ytdlp(url: str) -> dict:
 
                 is_hls = 'm3u8' in protocol or ext == 'm3u8' or '.m3u8' in f_url or 'hls' in format_id
                 height = f.get('height')
-                
+
                 if not height:
                     m = re.search(r'(\d{3,4})[pP]?', format_id + "-" + format_note + "-" + res_str)
                     if m: height = int(m.group(1))
@@ -614,7 +617,7 @@ def extract_with_ytdlp(url: str) -> dict:
                 "url": url,
                 "provider": provider
             }
-            
+
             if not is_pornhub: extraction_cache[url] = result
             return result
 
@@ -684,7 +687,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                     proto = request.headers.get("x-forwarded-proto", "https")
                     if not request_host:
                         request_host = request.headers.get("host", "")
-                    
+
                     lines = resp.text.split('\n')
                     rewritten = []
                     for line in lines:
@@ -705,7 +708,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                             next_endpoint = "/proxy-m3u8" if ".m3u8" in abs_uri else "/proxy-video"
                             new_uri = f"{proto}://{request_host}{next_endpoint}?url={quote(abs_uri)}&sig={sig}&exp={exp}&request_host={request_host}"
                             rewritten.append(new_uri)
-                            
+
                     return Response(content="\n".join(rewritten), media_type="application/vnd.apple.mpegurl", headers={
                         "Access-Control-Allow-Origin": "*",
                         "Cache-Control": "no-cache, no-store"
@@ -724,7 +727,7 @@ async def proxy_video(request: Request, url: str):
     }
     if "range" in request.headers:
         headers["Range"] = request.headers["range"]
-        
+
     client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
     try:
         req = client.build_request("GET", target, headers=headers)
@@ -737,7 +740,7 @@ async def proxy_video(request: Request, url: str):
             for k in ["Content-Type", "Content-Length", "Content-Range"]:
                 if k in resp.headers:
                     resp_headers[k] = resp.headers[k]
-                    
+
             async def stream_generator():
                 try:
                     async for chunk in resp.aiter_bytes(chunk_size=65536):
