@@ -74,16 +74,20 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
     soup = BeautifulSoup(html_text, 'html.parser')
 
     if provider == "pornhub":
-        items = soup.select('li.pcVideoListItem, div.videoblock, div.wrap, li[data-video-vkey]')
+        items = soup.select('li.pcVideoListItem, div.videoblock, div.wrap, li[data-video-vkey], div.videoBox')
         for item in items:
+            vkey = item.get('data-video-vkey', '')
             a_tag = item.select_one('a[href*="/view_video.php?viewkey="]')
-            if not a_tag: continue
-            href = a_tag.get('href', '')
-            full_url = href if href.startswith('http') else f"https://www.pornhub.com{href}"
             
-            match_vkey = re.search(r'viewkey=([a-zA-Z0-9]+)', full_url)
-            if not match_vkey: continue
-            vkey = match_vkey.group(1)
+            if not vkey and a_tag:
+                href = a_tag.get('href', '')
+                match_vkey = re.search(r'viewkey=([a-zA-Z0-9]+)', href)
+                if match_vkey:
+                    vkey = match_vkey.group(1)
+            
+            if not vkey:
+                continue
+
             full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
 
             title_tag = item.select_one('span.title a, a[title], img[alt]')
