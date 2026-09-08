@@ -54,50 +54,6 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
         headers['Referer'] = 'https://www.pornhub.com/'
 
-    if provider == "pornhub":
-        try:
-            ydl_opts = {'quiet': True, 'extract_flat': 'in_playlist', 'nocheckcertificate': True, 'http_headers': headers}
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(search_url, download=False)
-                entries = info.get('entries', []) if info else []
-                for entry in entries:
-                    if not entry: continue
-                    url = entry.get('url', '')
-                    vkey = entry.get('id', '')
-                    if not vkey and 'viewkey=' in url:
-                        try:
-                            vkey = url.split('viewkey=')[1].split('&')[0]
-                        except:
-                            pass
-                    elif not vkey and '/video/' in url:
-                        parts = [p for p in url.split('/') if p]
-                        if parts:
-                            vkey = parts[-1]
-                    
-                    if not vkey or len(vkey) < 5:
-                        continue
-
-                    title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
-                    if not title or "pornhub" in title.lower():
-                        title = f"Pornhub Video {vkey}"
-                        
-                    thumb = entry.get('thumbnail', '')
-                    if not thumb and entry.get('thumbnails'):
-                        thumb = entry.get('thumbnails')[0].get('url', '')
-
-                    full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
-                    videos.append({
-                        "vkey": vkey,
-                        "title": title,
-                        "thumbnail": thumb,
-                        "url": full_url,
-                        "provider": "pornhub"
-                    })
-            if videos:
-                return videos
-        except Exception as e:
-            logger.error(f"Pornhub yt-dlp search error: {e}")
-
     html_text = ""
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=headers) as client:
         for attempt in range(3):
@@ -115,7 +71,53 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
 
     soup = BeautifulSoup(html_text, 'html.parser')
 
-    if provider == "youporn":
+    if provider == "pornhub":
+        items = soup.select('li.pcVideoListItem, li.videoblock, div.pcVideoListItem, div.videoblock, li[data-video-vkey], div[data-video-vkey]')
+        for item in items:
+            vkey = item.get('data-video-vkey', '')
+            if not vkey:
+                vkey_attr = item.select_one('[data-video-vkey]')
+                if vkey_attr:
+                    vkey = vkey_attr.get('data-video-vkey', '')
+
+            a_tag = item.select_one('a[href*="viewkey="], a[href*="/view_video.php"]')
+            if not a_tag and not vkey:
+                continue
+            
+            href = a_tag.get('href', '') if a_tag else ''
+            if not vkey and 'viewkey=' in href:
+                try:
+                    vkey = href.split('viewkey=')[1].split('&')[0]
+                except:
+                    pass
+
+            if not vkey:
+                continue
+
+            full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
+
+            title_tag = item.select_one('span.title a, a.title, [title], img[alt]')
+            title = ""
+            if title_tag:
+                title = title_tag.get('title') or title_tag.get('alt') or title_tag.get_text(strip=True)
+            
+            if not title or title.isdigit() or 'pornhub' in title.lower():
+                title = f"Pornhub Video {vkey}"
+
+            img_tag = item.select_one('img')
+            thumb = ""
+            if img_tag:
+                thumb = (img_tag.get('data-thumb_url') or img_tag.get('data-mediumthumb') or img_tag.get('data-image') or img_tag.get('data-src') or img_tag.get('src') or "")
+
+            videos.append({
+                "vkey": vkey,
+                "title": html_parser.unescape(title),
+                "thumbnail": thumb,
+                "url": full_url,
+                "provider": "pornhub"
+            })
+
+    elif provider == "youporn":
         items = soup.select('div.video-box, div.pb-card, div.list-item, li.video-tile, div.videoBox, div.videoListItem, div[class*="video"], div.video-tile, a[href*="/watch/"]')
         for item in items:
             full_url, title, thumb = "", "", ""
@@ -360,7 +362,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
             else:
                 search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
 
-            ydl_opts = {'quiet': True, 'extract_flat': 'in_playlist', 'nocheckcertificate': True, 'http_headers': headers}
+            ydl_opts = {'quiet': True, 'extract_flat': True, 'nocheckcertificate': True, 'http_headers': headers}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(search_url, download=False)
                 if info:
