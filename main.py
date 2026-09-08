@@ -72,7 +72,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
     if provider == "pornhub":
         try:
             tree = lxml_html.fromstring(html_text)
-            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or @data-video-vkey] | //div[contains(@class, "pcVideoListItem") or contains(@class, "videoblock")]')
+            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or @data-video-vkey] | //div[contains(@class, "pcVideoListItem") or contains(@class, "videoblock") or contains(@class, "wrap")]')
             
             seen_ph_vkeys = set()
             for item in items:
