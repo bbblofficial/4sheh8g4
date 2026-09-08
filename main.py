@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
-from lxml import html
+from lxml import html as lxml_html
 from bs4 import BeautifulSoup
 import yt_dlp
 from cachetools import TTLCache
@@ -69,6 +69,68 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
     if not html_text:
         return videos
 
+    if provider == "pornhub":
+        try:
+            tree = lxml_html.fromstring(html_text)
+            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or @data-video-vkey]')
+            for item in items:
+                vkey_attr = item.get("data-video-vkey")
+                if not vkey_attr:
+                    vkey_list = item.xpath('.//@data-video-vkey')
+                    if vkey_list:
+                        vkey_attr = vkey_list[0]
+                
+                vkey = vkey_attr
+                if not vkey:
+                    hrefs = item.xpath('.//a[contains(@href, "viewkey=") or contains(@href, "/view_video.php") or contains(@href, "/video/")]/@href')
+                    for h in hrefs:
+                        if "viewkey=" in h:
+                            try:
+                                vkey = h.split("viewkey=")[1].split("&")[0]
+                                break
+                            except:
+                                pass
+                        elif "/video/" in h:
+                            parts = [p for p in h.split('/') if p]
+                            if parts:
+                                vkey = parts[-1]
+                                break
+                if not vkey:
+                    raw_html = lxml_html.tostring(item, encoding='unicode')
+                    match_vkey = re.search(r'viewkey=([a-zA-Z0-9]+)', raw_html)
+                    if match_vkey:
+                        vkey = match_vkey.group(1)
+
+                if not vkey or len(vkey) < 10:
+                    continue
+
+                full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
+
+                title_list = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title')
+                title = "Unknown Video"
+                for t in title_list:
+                    if t and t.strip() and not t.strip().isdigit() and len(t.strip()) > 2:
+                        title = t.strip()
+                        break
+
+                img_list = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@data-src | .//img/@src | .//img/@data-lazy-src')
+                thumb = ""
+                for im in img_list:
+                    if im and "data:image" not in im and "blank" not in im:
+                        thumb = im
+                        break
+
+                videos.append({
+                    "vkey": vkey,
+                    "title": html_parser.unescape(title),
+                    "thumbnail": thumb,
+                    "url": full_url,
+                    "provider": "pornhub"
+                })
+        except Exception as e:
+            logger.error(f"Pornhub lxml parsing error: {e}")
+        return videos
+
     soup = BeautifulSoup(html_text, 'html.parser')
 
     if provider == "youporn":
@@ -115,48 +177,6 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
                 "url": full_url,
                 "provider": "youporn"
             })
-
-    elif provider == "pornhub":
-        items = soup.select('li.videoblock, li.pcVideoListItem, li.js-pop, li.videoBox, ul#videoSearchResult li, div.search-video-list li, div.wrap, div.phimage, li[data-video-vkey], div.videoUList li, ul.videos li')
-        if not items:
-            items = soup.select('ul.videos.row li, li')
-        for item in items:
-            vkey = item.get("data-video-vkey")
-            if not vkey:
-                a_tag = item.select_one('a[href*="viewkey="], a[href*="/view_video.php"], a[href*="/video/"]')
-                if a_tag:
-                    h = a_tag.get('href', '')
-                    if "viewkey=" in h:
-                        try: vkey = h.split("viewkey=")[1].split("&")[0]
-                        except: pass
-                    elif "/video/" in h:
-                        parts = [p for p in h.split('/') if p]
-                        if parts: vkey = parts[-1]
-            if not vkey:
-                match_vkey = re.search(r'viewkey=([a-zA-Z0-9]+)', str(item))
-                if match_vkey:
-                    vkey = match_vkey.group(1)
-            if not vkey or len(vkey) < 10: continue
-            
-            full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
-
-            title_tag = item.select_one('.title a, a.title, img[alt], span.title a, a[title]')
-            title = ""
-            if title_tag:
-                title = title_tag.get('title') or title_tag.get('alt') or title_tag.get_text(strip=True)
-            if not title or title.isdigit() or len(title) <= 2:
-                img_tag = item.select_one('img')
-                if img_tag:
-                    title = img_tag.get('alt', '')
-            if not title:
-                title = f"PornHub Video {vkey}"
-
-            img_tag = item.select_one('img')
-            thumb = ""
-            if img_tag:
-                thumb = (img_tag.get('data-thumb_url') or img_tag.get('data-mediumthumb') or img_tag.get('data-image') or img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
-
-            videos.append({"vkey": vkey, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "pornhub"})
 
     elif provider == "xhamster":
         items = soup.select('div.video-thumb, div.thumb-list__item, div.video-container, div.cell, article, div.video-thumb-info')
