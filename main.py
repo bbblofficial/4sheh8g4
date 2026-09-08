@@ -176,22 +176,26 @@ async def search_provider_robust(provider: str, q: str, page: int):
                 title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else vid_id.replace('-', ' ').title()
 
                 thumb = ""
+                
+                # 1. Check data attributes & standard tags
                 img_tag = item.select_one('img')
                 if img_tag:
                     thumb = (img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-thumb') or img_tag.get('data-image') or "")
                 
                 if not thumb or 'svg' in thumb or 'logo' in thumb:
-                    srcset = item.get('data-image') or item.get('data-poster') or ''
-                    if srcset:
-                        thumb = srcset
+                    attr_val = item.get('data-image') or item.get('data-poster') or ''
+                    if attr_val:
+                        thumb = attr_val
 
+                # 2. Check picture source elements
                 if not thumb or 'svg' in thumb or 'logo' in thumb:
                     source_tag = item.select_one('source')
                     if source_tag:
-                        srcset = source_tag.get('srcset', '')
+                        srcset = source_tag.get('srcset', '') or source_tag.get('data-srcset', '')
                         if srcset:
                             thumb = srcset.split(',')[0].strip().split(' ')[0]
 
+                # 3. Fallback to image regex scan within inner HTML
                 if not thumb or 'svg' in thumb or 'logo' in thumb:
                     match_img = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', str(item))
                     if match_img:
@@ -199,8 +203,16 @@ async def search_provider_robust(provider: str, q: str, page: int):
                         if 'logo' not in candidate and 'svg' not in candidate:
                             thumb = candidate
 
+                # 4. Ultimate fallback: fetch thumbnail dynamically using yt-dlp metadata if missing
                 if not thumb or 'svg' in thumb or 'logo' in thumb:
-                    thumb = ""
+                    try:
+                        ydl_opts = {'quiet': True, 'nocheckcertificate': True, 'skip_download': True}
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            meta = ydl.extract_info(full_url, download=False)
+                            if meta and meta.get('thumbnail'):
+                                thumb = meta.get('thumbnail')
+                    except Exception:
+                        thumb = ""
 
                 videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                 if len(videos) >= 48: break
@@ -647,9 +659,11 @@ async def proxy_video(request: Request, url: str):
         resp = await client.send(req, stream=True)
         if resp.status_code in [200, 206]:
             resp_headers = {
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": "__ALL__", # replaced dynamically below
                 "Accept-Ranges": "bytes"
             }
+            # fix header assignment
+            resp_headers["Access-Control-Allow-Origin"] = "*"
             for k in ["Content-Type", "Content-Length", "Content-Range"]:
                 if k in resp.headers:
                     resp_headers[k] = resp.headers[k]
