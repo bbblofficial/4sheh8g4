@@ -179,33 +179,41 @@ async def search_provider_robust(provider: str, q: str, page: int):
                     continue
 
                 thumb = ""
-                img_tag = item.select_one('img')
-                if img_tag:
-                    thumb = (img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-thumb') or img_tag.get('data-image') or "")
                 
-                if not thumb or 'svg' in thumb or 'logo' in thumb or 'results' in thumb:
-                    attr_val = item.get('data-image') or item.get('data-poster') or ''
-                    if attr_val and 'svg' not in attr_val and 'logo' not in attr_val:
-                        thumb = attr_val
+                # Deep extraction for xHamster thumbnails across nested tags, attributes, and styles
+                img_tags = item.select('img')
+                for img in img_tags:
+                    src_candidate = (img.get('data-src') or img.get('src') or img.get('data-lazy-src') or img.get('data-thumb') or img.get('data-image') or "")
+                    if src_candidate and 'svg' not in src_candidate and 'logo' not in src_candidate and 'results' not in src_candidate:
+                        thumb = src_candidate
+                        break
 
-                if not thumb or 'svg' in thumb or 'logo' in thumb:
+                if not thumb:
+                    for attr_name in ['data-image', 'data-poster', 'data-src', 'data-background', 'style']:
+                        attr_val = item.get(attr_name, '')
+                        if attr_val:
+                            match_url = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', attr_val)
+                            if match_url:
+                                candidate = match_url.group(0)
+                                if 'logo' not in candidate and 'svg' not in candidate:
+                                    thumb = candidate
+                                    break
+
+                if not thumb:
                     source_tag = item.select_one('source')
                     if source_tag:
                         srcset = source_tag.get('srcset', '') or source_tag.get('data-srcset', '')
                         if srcset:
-                            candidate = srcset.split(',')[0].strip().split(' ')[0]
-                            if 'svg' not in candidate and 'logo' not in candidate:
-                                thumb = candidate
+                            match_srcset = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', srcset)
+                            if match_srcset:
+                                thumb = match_srcset.group(0)
 
-                if not thumb or 'svg' in thumb or 'logo' in thumb:
+                if not thumb:
                     match_img = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', str(item))
                     if match_img:
                         candidate = match_img.group(0)
                         if 'logo' not in candidate and 'svg' not in candidate and 'results' not in candidate:
                             thumb = candidate
-
-                if not thumb or 'svg' in thumb or 'logo' in thumb or 'results' in thumb:
-                    thumb = ""
 
                 videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                 if len(videos) >= 20: break
@@ -632,7 +640,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                         "Access-Control-Allow-Origin": "*",
                         "Cache-Control": "no-cache, no-store"
                     })
-            except Exception:
+            exceptException:
                 await asyncio.sleep(0.5)
     return Response(status_code=502, content="Backend Proxy Error")
 
