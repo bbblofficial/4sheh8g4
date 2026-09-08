@@ -344,7 +344,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     thumb = ""
                     
                     if container:
-                        # Extract title safely from card attributes or children elements (avoiding time durations like '23:51')
+                        # Extract title properly and filter out duration metadata (e.g. '23:51') or raw numeric strings
                         title_candidates = container[0].xpath('.//@title | .//img/@alt | .//p[contains(@class, "title")]//text() | .//span[contains(@class, "title")]//text() | .//a/text() | .//div[contains(@class,"title")]//text()')
                         for t in title_candidates:
                             clean_t = t.strip()
@@ -356,9 +356,9 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                         if img_elems:
                             thumb = img_elems[0].get('data-src') or img_elems[0].get('src') or img_elems[0].get('data-lazy-src') or img_elems[0].get('data-image') or ""
                     
-                    if not title:
+                    if not title or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title):
                         title = anchor.get('title') or ""
-                        if not title or re.match(r'^\d{1,2}:\d{2}(?::\d{2})?$', title) or title.isdigit():
+                        if not title or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title):
                             title = vid_id.replace('-', ' ').title()
 
                     if not thumb:
@@ -625,7 +625,7 @@ async def proxy_video(request: Request, url: str):
         resp = await client.send(req, stream=True)
         
         resp_headers = {
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": "...",
             "Accept-Ranges": "bytes"
         }
         for k in ["Content-Type", "Content-Length", "Content-Range"]:
