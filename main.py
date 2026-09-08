@@ -324,7 +324,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 
                     full_url = href if href.startswith('http') else f"https://xhamster.com{href}"
                     
-                    # Strict validation to filter out non-video links (channels, creators, shorts, tags, playlists, etc.)
                     if not re.search(r'/videos?/', full_url) or full_url in seen_urls:
                         continue
                     seen_urls.add(full_url)
