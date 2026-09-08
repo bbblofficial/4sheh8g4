@@ -35,7 +35,7 @@ app.add_middleware(
 async def search_provider_robust(provider: str, q: str, page: int):
     cache_key = f"{provider}:{q}:{page}"
     if cache_key in search_cache:
-        return search_cache[cache_key]
+        return search_cache[cache_key][:20]
 
     videos = []
     headers = {
@@ -126,7 +126,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
                     "url": full_url,
                     "provider": "youporn"
                 })
-                if len(videos) >= 48: break
+                if len(videos) >= 20: break
 
         elif provider == "pornhub":
             items = soup.select('li.videoblock, li.pcVideoListItem, li.js-pop, li.videoBox, ul#videoSearchResult li, div.search-video-list li')
@@ -156,7 +156,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
                     thumb = (img_tag.get('data-thumb_url') or img_tag.get('data-mediumthumb') or img_tag.get('data-image') or img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
 
                 videos.append({"vkey": vkey, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "pornhub"})
-                if len(videos) >= 48: break
+                if len(videos) >= 20: break
 
         elif provider == "xhamster":
             items = soup.select('div.video-thumb, div.thumb-list__item, div.video-container, div.cell, article, div.video-thumb-info')
@@ -175,47 +175,40 @@ async def search_provider_robust(provider: str, q: str, page: int):
                 title_tag = item.select_one('a.video-thumb__title, a[title], h4, p')
                 title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else vid_id.replace('-', ' ').title()
 
+                if "results" in title.lower() or not a_tag.get('href'):
+                    continue
+
                 thumb = ""
-                
-                # 1. Check data attributes & standard tags
                 img_tag = item.select_one('img')
                 if img_tag:
                     thumb = (img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-thumb') or img_tag.get('data-image') or "")
                 
-                if not thumb or 'svg' in thumb or 'logo' in thumb:
+                if not thumb or 'svg' in thumb or 'logo' in thumb or 'results' in thumb:
                     attr_val = item.get('data-image') or item.get('data-poster') or ''
-                    if attr_val:
+                    if attr_val and 'svg' not in attr_val and 'logo' not in attr_val:
                         thumb = attr_val
 
-                # 2. Check picture source elements
                 if not thumb or 'svg' in thumb or 'logo' in thumb:
                     source_tag = item.select_one('source')
                     if source_tag:
                         srcset = source_tag.get('srcset', '') or source_tag.get('data-srcset', '')
                         if srcset:
-                            thumb = srcset.split(',')[0].strip().split(' ')[0]
+                            candidate = srcset.split(',')[0].strip().split(' ')[0]
+                            if 'svg' not in candidate and 'logo' not in candidate:
+                                thumb = candidate
 
-                # 3. Fallback to image regex scan within inner HTML
                 if not thumb or 'svg' in thumb or 'logo' in thumb:
                     match_img = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', str(item))
                     if match_img:
                         candidate = match_img.group(0)
-                        if 'logo' not in candidate and 'svg' not in candidate:
+                        if 'logo' not in candidate and 'svg' not in candidate and 'results' not in candidate:
                             thumb = candidate
 
-                # 4. Ultimate fallback: fetch thumbnail dynamically using yt-dlp metadata if missing
-                if not thumb or 'svg' in thumb or 'logo' in thumb:
-                    try:
-                        ydl_opts = {'quiet': True, 'nocheckcertificate': True, 'skip_download': True}
-                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            meta = ydl.extract_info(full_url, download=False)
-                            if meta and meta.get('thumbnail'):
-                                thumb = meta.get('thumbnail')
-                    except Exception:
-                        thumb = ""
+                if not thumb or 'svg' in thumb or 'logo' in thumb or 'results' in thumb:
+                    thumb = ""
 
                 videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
-                if len(videos) >= 48: break
+                if len(videos) >= 20: break
 
         elif provider == "redtube":
             items = soup.select('div.videoBox, li.videoblock, div.video-item, div.pb-card, div[class*="video"]')
@@ -255,7 +248,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
                     thumb = (img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or "")
 
                 videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "redtube"})
-                if len(videos) >= 48: break
+                if len(videos) >= 20: break
 
         elif provider == "xnxx":
             items = soup.select('div.mozaique div.thumb-block')
@@ -275,7 +268,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
                 thumb = img_tag.get('data-src') or img_tag.get('src') or item.select_one('[data-videothumb]').get('data-videothumb', '') if img_tag else ""
 
                 videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xnxx"})
-                if len(videos) >= 48: break
+                if len(videos) >= 20: break
 
         elif provider == "xvideos":
             items = soup.select('div.mozaique div.thumb-block')
@@ -298,7 +291,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
                 thumb = img_tag.get('data-src') or img_tag.get('src') or "" if img_tag else ""
 
                 videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xvideos"})
-                if len(videos) >= 48: break
+                if len(videos) >= 20: break
 
     if not videos:
         try:
@@ -329,12 +322,13 @@ async def search_provider_robust(provider: str, q: str, page: int):
                             "vkey": vkey, "title": title, "thumbnail": thumb,
                             "url": url if url.startswith('http') else search_url, "provider": provider
                         })
-                        if len(videos) >= 48: break
+                        if len(videos) >= 20: break
         except Exception as e:
             logger.error(f"yt-dlp flat fallback search error for {provider}: {e}")
 
-    search_cache[cache_key] = videos
-    return videos
+    final_videos = videos[:20]
+    search_cache[cache_key] = final_videos
+    return final_videos
 
 def parse_metadata_fallback(url: str, provider: str) -> dict:
     base_domain = "https://www.pornhub.com"
@@ -659,11 +653,9 @@ async def proxy_video(request: Request, url: str):
         resp = await client.send(req, stream=True)
         if resp.status_code in [200, 206]:
             resp_headers = {
-                "Access-Control-Allow-Origin": "__ALL__", # replaced dynamically below
+                "Access-Control-Allow-Origin": "*",
                 "Accept-Ranges": "bytes"
             }
-            # fix header assignment
-            resp_headers["Access-Control-Allow-Origin"] = "*"
             for k in ["Content-Type", "Content-Length", "Content-Range"]:
                 if k in resp.headers:
                     resp_headers[k] = resp.headers[k]
