@@ -117,7 +117,9 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
             })
 
     elif provider == "pornhub":
-        items = soup.select('li.videoblock, li.pcVideoListItem, li.js-pop, li.videoBox, ul#videoSearchResult li, div.search-video-list li, div.wrap, div[id*="video"], div.phimage, li')
+        items = soup.select('li.videoblock, li.pcVideoListItem, li.js-pop, li.videoBox, ul#videoSearchResult li, div.search-video-list li, div.wrap, div.phimage, li[data-video-vkey], div.videoUList li')
+        if not items:
+            items = soup.select('ul.videos.row li, li')
         for item in items:
             vkey = item.get("data-video-vkey")
             if not vkey:
