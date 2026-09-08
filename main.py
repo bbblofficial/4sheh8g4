@@ -30,6 +30,58 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def search_youporn_with_ytdlp(q: str, page: int):
+    ydl_opts = {
+        'quiet': True,
+        'extract_flat': True,
+        'nocheckcertificate': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://www.youporn.com/',
+            'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
+        }
+    }
+    videos = []
+    try:
+        search_url = f"https://www.youporn.com/search/?query={quote(q)}&page={page}"
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(search_url, download=False)
+            if not info: return videos
+            
+            entries = info.get('entries', [])
+            for entry in entries:
+                if not entry: continue
+                
+                url = entry.get('url', '')
+                vkey = entry.get('id', '')
+                if not vkey and '/watch/' in url:
+                    parts = [p for p in url.split('/') if p]
+                    if len(parts) > 1 and parts[0] == 'watch':
+                        vkey = parts[1]
+                    else:
+                        vkey = parts[-1] if parts else "unknown"
+                if not vkey: continue
+                
+                title = html_parser.unescape(entry.get('title', f"YouPorn Video {vkey}"))
+                thumb = entry.get('thumbnail', '')
+                if not thumb and entry.get('thumbnails'):
+                    thumb = entry.get('thumbnails')[0].get('url', '')
+                    
+                full_url = url if url.startswith('http') else f"https://www.youporn.com/watch/{vkey}/"
+                videos.append({
+                    "vkey": vkey,
+                    "title": title,
+                    "thumbnail": thumb,
+                    "url": full_url,
+                    "provider": "youporn"
+                })
+                
+                if len(videos) >= 48:
+                    break
+    except Exception as e:
+        logger.error(f"yt-dlp youporn search error: {e}")
+    return videos
+
 def search_pornhub_with_ytdlp(q: str, page: int):
     ydl_opts = {
         'quiet': True,
@@ -324,6 +376,9 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                 if provider == "pornhub":
                     loop = asyncio.get_running_loop()
                     return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
+                elif provider == "youporn":
+                    loop = asyncio.get_running_loop()
+                    return JSONResponse(await loop.run_in_executor(thread_pool, search_youporn_with_ytdlp, q, page))
                 return JSONResponse([])
             await asyncio.sleep(1.0)
 
@@ -331,6 +386,9 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         if provider == "pornhub":
             loop = asyncio.get_running_loop()
             return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
+        elif provider == "youporn":
+            loop = asyncio.get_running_loop()
+            return JSONResponse(await loop.run_in_executor(thread_pool, search_youporn_with_ytdlp, q, page))
         return JSONResponse([])
 
     try:
@@ -342,7 +400,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
         seen_urls = set()
 
         if provider == "youporn":
-            cards = tree.xpath('//div[contains(@class, "video-box")] | //div[contains(@class, "pb-card")] | //div[contains(@class, "list-item")] | //li[contains(@class, "video-tile")] | //div[@id="searchResult"]//div[contains(@class, "video")] | //div[contains(@class, "videoBox")]')
+            cards = tree.xpath('//div[contains(@class, "video-box")] | //div[contains(@class, "pb-card")] | //div[contains(@class, "list-item")] | //li[contains(@class, "video-tile")] | //div[@id="searchResult"]//div[contains(@class, "video")] | //div[contains(@class, "videoBox")] | //div[contains(@class, "videoListItem")]')
             if not cards:
                 cards = tree.xpath('//a[contains(@href, "/watch/")]')
 
@@ -357,7 +415,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
                     title = card.get('title') or card.text_content().strip() or ""
                     
-                    # Robust multi-attribute thumbnail scraping for YouPorn anchors
                     thumb = card.get('data-src') or card.get('data-image') or card.get('data-thumb') or ""
                     if not thumb:
                         img_el = card.xpath('.//img')
@@ -403,6 +460,10 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     "provider": "youporn"
                 })
                 if len(videos) >= 48: break
+
+            if len(videos) == 0:
+                loop = asyncio.get_running_loop()
+                return JSONResponse(await loop.run_in_executor(thread_pool, search_youporn_with_ytdlp, q, page))
 
         elif provider == "pornhub":
             items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or contains(@class, "videoBox")]')
