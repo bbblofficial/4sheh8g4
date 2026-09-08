@@ -175,30 +175,32 @@ async def search_provider_robust(provider: str, q: str, page: int):
                 title_tag = item.select_one('a.video-thumb__title, a[title], h4, p')
                 title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else vid_id.replace('-', ' ').title()
 
-                img_tag = item.select_one('img')
                 thumb = ""
+                img_tag = item.select_one('img')
                 if img_tag:
                     thumb = (img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-thumb') or img_tag.get('data-image') or "")
-                if not thumb and img_tag:
-                    srcset = img_tag.get('srcset', '')
+                
+                if not thumb or 'svg' in thumb or 'logo' in thumb:
+                    srcset = item.get('data-image') or item.get('data-poster') or ''
                     if srcset:
-                        thumb = srcset.split(',')[0].strip().split(' ')[0]
-                if not thumb:
-                    poster_attr = item.select_one('[data-poster], [data-image], [data-src]')
-                    if poster_attr:
-                        thumb = (poster_attr.get('data-poster') or poster_attr.get('data-image') or poster_attr.get('data-src') or '')
+                        thumb = srcset
 
-                if not thumb or 'svg' in thumb:
+                if not thumb or 'svg' in thumb or 'logo' in thumb:
                     source_tag = item.select_one('source')
                     if source_tag:
                         srcset = source_tag.get('srcset', '')
                         if srcset:
                             thumb = srcset.split(',')[0].strip().split(' ')[0]
 
-                if not thumb or 'svg' in thumb:
+                if not thumb or 'svg' in thumb or 'logo' in thumb:
                     match_img = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', str(item))
                     if match_img:
-                        thumb = match_img.group(0)
+                        candidate = match_img.group(0)
+                        if 'logo' not in candidate and 'svg' not in candidate:
+                            thumb = candidate
+
+                if not thumb or 'svg' in thumb or 'logo' in thumb:
+                    thumb = ""
 
                 videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                 if len(videos) >= 48: break
@@ -457,7 +459,7 @@ def extract_with_ytdlp(url: str) -> dict:
                 if t.get('url') and t.get('url') not in all_thumbs:
                     all_thumbs.append(t.get('url'))
 
-            clean_thumbs = [t for t in all_thumbs if 'hash=' not in t and 'validto=' not in t and 'hdnea=' not in t and 'svg' not in t]
+            clean_thumbs = [t for t in all_thumbs if 'hash=' not in t and 'validto=' not in t and 'hdnea=' not in t and 'svg' not in t and 'logo.jpg' not in t]
             
             if clean_thumbs:
                 thumbnail = clean_thumbs[0]
