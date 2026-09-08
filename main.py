@@ -11,7 +11,6 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
-from lxml import html as lxml_html
 from bs4 import BeautifulSoup
 import yt_dlp
 from cachetools import TTLCache
@@ -34,7 +33,10 @@ app.add_middleware(
 
 async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> list:
     videos = []
-    if provider == "youporn":
+    if provider == "pornhub":
+        search_url = f"https://www.pornhub.com/video/search?search={quote(q)}" if page <= 1 else f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
+        headers['Referer'] = 'https://www.pornhub.com/'
+    elif provider == "youporn":
         search_url = f"https://www.youporn.com/search/?query={quote(q)}&page={page}"
         headers['Referer'] = 'https://www.youporn.com/'
     elif provider == "xhamster":
@@ -51,7 +53,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
         search_url = f"https://www.xvideos.com/?k={quote(q)}" if p_val == 0 else f"https://www.xvideos.com/?k={quote(q)}&p={p_val}"
         headers['Referer'] = 'https://www.xvideos.com/'
     else:
-        search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
+        search_url = f"https://www.pornhub.com/video/search?search={quote(q)}"
         headers['Referer'] = 'https://www.pornhub.com/'
 
     html_text = ""
@@ -72,42 +74,33 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
     soup = BeautifulSoup(html_text, 'html.parser')
 
     if provider == "pornhub":
-        items = soup.select('li.pcVideoListItem, li.videoblock, div.pcVideoListItem, div.videoblock, li[data-video-vkey], div[data-video-vkey]')
+        items = soup.select('li.pcVideoListItem, div.videoblock, div.wrap, li[data-video-vkey]')
         for item in items:
-            vkey = item.get('data-video-vkey', '')
-            if not vkey:
-                vkey_attr = item.select_one('[data-video-vkey]')
-                if vkey_attr:
-                    vkey = vkey_attr.get('data-video-vkey', '')
+            a_tag = item.select_one('a[href*="/view_video.php?viewkey="]')
+            if not a_tag: continue
+            href = a_tag.get('href', '')
+            full_url = href if href.startswith('http') else f"https://www.pornhub.com{href}"
+            full_url = full_url.split('?')[0] + f"?viewkey={re.search(r'viewkey=([a-zA-Z0-9]+)', href).group(1)}" if 'viewkey=' in href else full_url
 
-            a_tag = item.select_one('a[href*="viewkey="], a[href*="/view_video.php"]')
-            if not a_tag and not vkey:
-                continue
-            
-            href = a_tag.get('href', '') if a_tag else ''
-            if not vkey and 'viewkey=' in href:
-                try:
-                    vkey = href.split('viewkey=')[1].split('&')[0]
-                except:
-                    pass
+            match_vkey = re.search(r'viewkey=([a-zA-Z0-9]+)', full_url)
+            if not match_vkey: continue
+            vkey = match_vkey.group(1)
 
-            if not vkey:
-                continue
-
-            full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
-
-            title_tag = item.select_one('span.title a, a.title, [title], img[alt]')
+            title_tag = item.select_one('span.title a, a[title], img[alt]')
             title = ""
             if title_tag:
                 title = title_tag.get('title') or title_tag.get('alt') or title_tag.get_text(strip=True)
-            
-            if not title or title.isdigit() or 'pornhub' in title.lower():
-                title = f"Pornhub Video {vkey}"
+            if not title or title.isdigit():
+                img_tag = item.select_one('img')
+                if img_tag:
+                    title = img_tag.get('alt') or f"PornHub Video {vkey}"
+            if not title:
+                title = f"PornHub Video {vkey}"
 
-            img_tag = item.select_one('img')
             thumb = ""
+            img_tag = item.select_one('img')
             if img_tag:
-                thumb = (img_tag.get('data-thumb_url') or img_tag.get('data-mediumthumb') or img_tag.get('data-image') or img_tag.get('data-src') or img_tag.get('src') or "")
+                thumb = img_tag.get('data-mediabook') or img_tag.get('data-src') or img_tag.get('src') or ""
 
             videos.append({
                 "vkey": vkey,
@@ -349,7 +342,9 @@ async def search_provider_robust(provider: str, q: str, page: int):
 
     if not unique_videos:
         try:
-            if provider == "youporn":
+            if provider == "pornhub":
+                search_url = f"https://www.pornhub.com/video/search?search={quote(q)}" if page <= 1 else f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
+            elif provider == "youporn":
                 search_url = f"https://www.youporn.com/search/?query={quote(q)}&page={page}"
             elif provider == "xhamster":
                 search_url = f"https://xhamster.com/search/{quote(q)}"
@@ -360,7 +355,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
             elif provider == "xvideos":
                 search_url = f"https://www.xvideos.com/?k={quote(q)}"
             else:
-                search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
+                search_url = f"https://www.pornhub.com/video/search?search={quote(q)}"
 
             ydl_opts = {'quiet': True, 'extract_flat': True, 'nocheckcertificate': True, 'http_headers': headers}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -370,11 +365,12 @@ async def search_provider_robust(provider: str, q: str, page: int):
                         if not entry: continue
                         url = entry.get('url', '')
                         vkey = entry.get('id', '')
-                        if not vkey and '/watch/' in url:
+                        if not vkey and 'viewkey=' in url:
+                            m_vk = re.search(r'viewkey=([a-zA-Z0-9]+)', url)
+                            if m_vk: vkey = m_vk.group(1)
+                        elif not vkey and '/watch/' in url:
                             parts = [p for p in url.split('/') if p]
                             vkey = parts[1] if len(parts) > 1 and parts[0] == 'watch' else (parts[-1] if parts else "")
-                        elif not vkey and 'viewkey=' in url:
-                            vkey = url.split('viewkey=')[1].split('&')[0]
                         elif not vkey and any(d in url for d in ['videos/', 'video-']):
                             parts = [p for p in url.split('/') if p]
                             vkey = parts[-1] if parts else ""
@@ -404,7 +400,9 @@ async def search_provider_robust(provider: str, q: str, page: int):
 
 def parse_metadata_fallback(url: str, provider: str) -> dict:
     base_domain = "https://www.pornhub.com"
-    if "xhamster.com" in url:
+    if "pornhub.com" in url:
+        base_domain = "https://www.pornhub.com"
+    elif "xhamster.com" in url:
         base_domain = "https://xhamster.com"
     elif "xnxx.com" in url:
         base_domain = "https://www.xnxx.com"
@@ -439,7 +437,7 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                 if not scraped_title:
                     title_tag = soup.find('title')
                     if title_tag:
-                        scraped_title = title_tag.get_text().replace('&amp;', '&').split('- RedTube')[0].split('- Pornhub')[0].split('- YouPorn')[0].split('- xHamster')[0].strip()
+                        scraped_title = title_tag.get_text().replace('&amp;', '&').split('- PornHub')[0].split('- RedTube')[0].split('- YouPorn')[0].split('- xHamster')[0].strip()
 
                 og_img = soup.find('meta', property='og:image')
                 if og_img and og_img.get('content'):
@@ -470,12 +468,13 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
     return {"view_count": 0, "upload_date": "", "thumbnail": "", "title": ""}
 
 def extract_with_ytdlp(url: str) -> dict:
-    is_pornhub = "pornhub.com" in url
-    if not is_pornhub and url in extraction_cache:
+    if url in extraction_cache:
         return extraction_cache[url]
 
     provider = "pornhub"
-    if "xhamster.com" in url:
+    if "pornhub.com" in url:
+        provider = "pornhub"
+    elif "xhamster.com" in url:
         provider = "xhamster"
     elif "xnxx.com" in url:
         provider = "xnxx"
@@ -614,7 +613,7 @@ def extract_with_ytdlp(url: str) -> dict:
                 "provider": provider
             }
 
-            if not is_pornhub: extraction_cache[url] = result
+            extraction_cache[url] = result
             return result
 
         except Exception as e:
@@ -632,9 +631,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 async def extract_endpoint(url: str):
     if not url: return JSONResponse({"status": "error", "error": "Missing URL"})
     target_url = url.strip()
-    if "viewkey=" not in target_url and not any(d in target_url for d in ["xhamster.com", "xnxx.com", "xvideos.com", "redtube.com", "youporn.com"]):
-        if len(target_url) in [13, 15, 16] and "." not in target_url:
-             target_url = f"https://www.pornhub.com/view_video.php?viewkey={target_url}"
     loop = asyncio.get_running_loop()
     res = await loop.run_in_executor(thread_pool, extract_with_ytdlp, target_url)
     return JSONResponse(res)
@@ -645,7 +641,7 @@ async def fallback_proxy_image(url: str):
     if target.startswith('//'): target = "https:" + target
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://www.youporn.com/',
+        'Referer': 'https://www.pornhub.com/',
         'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
     }
     async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
@@ -671,7 +667,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
     target = url.strip()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
-        "Referer": "https://www.youporn.com/",
+        "Referer": "https://www.pornhub.com/",
         "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
     }
     async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
@@ -718,7 +714,7 @@ async def proxy_video(request: Request, url: str):
     target = url.strip()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
-        "Referer": "https://www.youporn.com/",
+        "Referer": "https://www.pornhub.com/",
         "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
     }
     if "range" in request.headers:
