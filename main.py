@@ -60,20 +60,19 @@ def search_provider_robust(provider: str, q: str, page: int):
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
         headers['Referer'] = 'https://www.pornhub.com/'
 
-    # Method 1: BeautifulSoup HTML Scraping with 5 Multi-Attempts
+    # Multi-method scraping chain: BeautifulSoup + lxml + Regex JSON fallback
     for attempt in range(5):
         try:
             import requests
             resp = requests.get(search_url, headers=headers, timeout=10)
             if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, 'html.parser')
+                html_text = resp.text
+                soup = BeautifulSoup(html_text, 'html.parser')
+                tree = html.fromstring(html_text)
                 seen = set()
 
                 if provider == "youporn":
-                    items = soup.select('div.video-box, div.pb-card, div.list-item, li.video-tile, div.videoBox, div.videoListItem, div[class*="video"], div.video-tile')
-                    if not items:
-                        items = soup.select('a[href*="/watch/"]')
-
+                    items = soup.select('div.video-box, div.pb-card, div.list-item, li.video-tile, div.videoBox, div.videoListItem, div[class*="video"], div.video-tile, a[href*="/watch/"]')
                     for item in items:
                         full_url = ""
                         title = ""
@@ -205,10 +204,16 @@ def search_provider_robust(provider: str, q: str, page: int):
                         vid_parts = [p for p in full_url.split('/') if p]
                         vid_id = vid_parts[-1] if vid_parts else "unknown"
 
+                        # Robust RedTube title & duration filtering (ignores duration strings like "15:30")
                         title_tag = item.select_one('a[title], span.title, a, p, h3, h4')
-                        title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
-                        if title.isdigit() or len(title) <= 2:
-                            continue
+                        title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else ""
+                        if not title or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title) or 'redtube' in title.lower():
+                            # Attempt alt tag or sibling text
+                            alt_title = a_tag.get('title', '')
+                            if alt_title and not alt_title.isdigit() and not re.match(r'^\d{1,2}:\d{2}', alt_title):
+                                title = alt_title
+                            else:
+                                title = vid_id.replace('-', ' ').title()
 
                         img_tag = item.select_one('img')
                         thumb = ""
@@ -268,7 +273,7 @@ def search_provider_robust(provider: str, q: str, page: int):
             logger.error(f"Search provider {provider} attempt {attempt+1} error: {e}")
             time.sleep(1.0)
 
-    # Method 2: yt-dlp Flat Extraction Fallback
+    # Fallback: yt-dlp flat extraction
     try:
         ydl_opts = {'quiet': True, 'extract_flat': True, 'nocheckcertificate': True, 'http_headers': headers}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
