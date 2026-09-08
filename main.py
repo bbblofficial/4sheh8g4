@@ -699,7 +699,7 @@ async def proxy_video(request: Request, url: str):
                     
             async def stream_generator():
                 try:
-                    async fnk in resp.aiter_bytes(chunk_size=65536):
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
                         yield chunk
                 finally:
                     await client.aclose()
