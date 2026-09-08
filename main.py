@@ -324,7 +324,55 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
             videos = []
             seen_urls = set()
 
-            if provider == "xhamster":
+            if provider == "pornhub":
+                # Universal robust XPath for Pornhub search items
+                items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or contains(@class, "videoBox")]')
+                if not items:
+                    items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "pcVideoListItem")]')
+
+                for item in items:
+                    vkey = item.get("data-video-vkey") or next(iter(item.xpath('.//@data-video-vkey')), None)
+                    if not vkey:
+                        hrefs = item.xpath('.//a[contains(@href, "viewkey=")]/@href | .//a[contains(@href, "/view_video.php")]/@href | .//a[contains(@href, "/video/")]/@href')
+                        for h in hrefs:
+                            if "viewkey=" in h or "/view_video.php?" in h:
+                                try:
+                                    vkey = h.split("viewkey=")[1].split("&")[0]
+                                    break
+                                except Exception: pass
+                            elif "/video/" in h:
+                                try:
+                                    parts = [p for p in h.split('/') if p]
+                                    if parts:
+                                        vkey = parts[-1]
+                                        break
+                                except Exception: pass
+                    if not vkey: continue
+                    full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
+                    if full_url in seen_urls: continue
+                    seen_urls.add(full_url)
+
+                    title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title')
+                    title = next((html_parser.unescape(t.strip()) for t in title_elem if t and len(t.strip()) > 3), "")
+                    if not title:
+                        all_txt = item.xpath('.//a//text() | .//span//text()')
+                        title = next((html_parser.unescape(t.strip()) for t in all_txt if t and len(t.strip()) > 3 and "pornhub" not in t.lower()), "Unknown Video")
+
+                    raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@data-src | .//img/@src')
+                    thumb = ""
+                    for t in raw_thumbs:
+                        if t and "data:image" not in t and "blank" not in t and "transparent" not in t and "data:auto" not in t and ".svg" not in t:
+                            thumb = t
+                            break
+
+                    videos.append({"vkey": vkey, "title": title, "thumbnail": thumb, "url": full_url, "provider": "pornhub"})
+                    if len(videos) >= 48: break
+
+                if len(videos) == 0:
+                    loop = asyncio.get_running_loop()
+                    return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
+
+            elif provider == "xhamster":
                 items = tree.xpath('//div[contains(@class, "video-thumb")] | //div[contains(@class, "thumb-list__item")] | //div[contains(@class, "video-container")] | //div[contains(@class, "cell")] | //article | //div[contains(@class, "video-thumb-info")]')
                 for item in items:
                     link_elems = item.xpath('.//a[contains(@class, "video-thumb__image-container")]/@href | .//a[contains(@class, "thumb-image-container")]/@href | .//a/@href')
@@ -339,7 +387,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     vid_parts = [p for p in full_url.split('/') if p]
                     vid_id = vid_parts[-1] if vid_parts else "unknown"
 
-                    # Safely extract title from card, ignoring UI result metadata counts (e.g. '6184 Results')
                     title = ""
                     title_elems = item.xpath('.//a[contains(@class, "video-thumb__title")]/text() | .//a/@title | .//img/@alt | .//h4/text() | .//p/text() | .//a//text()')
                     for t in title_elems:
@@ -485,50 +532,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 
                     videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xvideos"})
                     if len(videos) >= 48: break
-            else:
-                items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or contains(@class, "videoBox")]')
-                if not items:
-                    items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li')
-
-                for item in items:
-                    vkey = item.get("data-video-vkey") or next(iter(item.xpath('.//@data-video-vkey')), None)
-                    if not vkey:
-                        hrefs = item.xpath('.//a[contains(@href, "viewkey=")]/@href | .//a[contains(@href, "/view_video.php")]/@href | .//a[contains(@href, "/video/")]/@href')
-                        for h in hrefs:
-                            if "viewkey=" in h or "/view_video.php?" in h:
-                                try:
-                                    vkey = h.split("viewkey=")[1].split("&")[0]
-                                    break
-                                except Exception: pass
-                            elif "/video/" in h:
-                                try:
-                                    parts = [p for p in h.split('/') if p]
-                                    if parts:
-                                        vkey = parts[-1]
-                                        break
-                                except Exception: pass
-                    if not vkey: continue
-                    full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
-                    if full_url in seen_urls: continue
-                    seen_urls.add(full_url)
-
-                    title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title')
-                    title = next((html_parser.unescape(t.strip()) for t in title_elem if t and len(t.strip()) > 3), "Unknown Video")
-
-                    raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@data-src | .//img/@src')
-                    thumb = ""
-                    for t in raw_thumbs:
-                        if t and "data:image" not in t and "blank" not in t and "transparent" not in t and "data:auto" not in t:
-                            thumb = t
-                            break
-                    if not thumb: continue
-
-                    videos.append({"vkey": vkey, "title": title, "thumbnail": thumb, "url": full_url, "provider": "pornhub"})
-                    if len(videos) >= 48: break
-                
-                if len(videos) == 0:
-                    loop = asyncio.get_running_loop()
-                    return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
 
             return JSONResponse(videos)
 
@@ -619,7 +622,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                     rewritten.append(new_uri)
                     
             return Response(content="\n".join(rewritten), media_type="application/vnd.apple.mpegurl", headers={
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": "...",
                 "Cache-Control": "no-cache, no-store"
             })
     except Exception as e:
