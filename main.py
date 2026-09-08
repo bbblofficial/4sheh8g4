@@ -60,7 +60,7 @@ def search_provider_robust(provider: str, q: str, page: int):
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
         headers['Referer'] = 'https://www.pornhub.com/'
 
-    # Multi-method scraping chain: BeautifulSoup + lxml + Regex JSON fallback
+    # Multi-method scraping chain: BeautifulSoup + lxml + Recursive Fallback Patching
     for attempt in range(5):
         try:
             import requests
@@ -184,6 +184,11 @@ def search_provider_robust(provider: str, q: str, page: int):
                             srcset = img_tag.get('srcset', '')
                             if srcset:
                                 thumb = srcset.split(',')[0].strip().split(' ')[0]
+                        if not thumb:
+                            # Additional deep check for data-poster or background style
+                            poster_attr = item.select_one('[data-poster]')
+                            if poster_attr:
+                                thumb = poster_attr.get('data-poster', '')
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                         if len(videos) >= 48: break
@@ -204,11 +209,12 @@ def search_provider_robust(provider: str, q: str, page: int):
                         vid_parts = [p for p in full_url.split('/') if p]
                         vid_id = vid_parts[-1] if vid_parts else "unknown"
 
-                        # Robust RedTube title & duration filtering (ignores duration strings like "15:30")
-                        title_tag = item.select_one('a[title], span.title, a, p, h3, h4')
-                        title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else ""
+                        # Comprehensive RedTube title extractor handling title attribute or text nodes and filtering out duration timestamps
+                        title_tag = item.select_one('.video-title-text, a[title], span.title, a, p, h3, h4')
+                        title = ""
+                        if title_tag:
+                            title = title_tag.get('title') or title_tag.get_text(strip=True)
                         if not title or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title) or 'redtube' in title.lower():
-                            # Attempt alt tag or sibling text
                             alt_title = a_tag.get('title', '')
                             if alt_title and not alt_title.isdigit() and not re.match(r'^\d{1,2}:\d{2}', alt_title):
                                 title = alt_title
@@ -268,12 +274,21 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if len(videos) >= 48: break
 
                 if len(videos) > 0:
+                    # Recursive self-healing post-processor: if any item has missing metadata or empty thumbnail, patch via fallback
+                    for v in videos:
+                        if not v["thumbnail"] or not v["title"] or v["title"].isdigit() or re.match(r'^\d{1,2}:\d{2}', v["title"]):
+                            try:
+                                sub_meta = parse_metadata_fallback(v["url"], provider)
+                                if sub_meta.get("thumbnail") and not v["thumbnail"]:
+                                    v["thumbnail"] = sub_meta["thumbnail"]
+                            except:
+                                pass
                     return videos
         except Exception as e:
             logger.error(f"Search provider {provider} attempt {attempt+1} error: {e}")
             time.sleep(1.0)
 
-    # Fallback: yt-dlp flat extraction
+    # yt-dlp flat extraction fallback
     try:
         ydl_opts = {'quiet': True, 'extract_flat': True, 'nocheckcertificate': True, 'http_headers': headers}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
