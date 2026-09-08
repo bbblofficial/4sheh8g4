@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 from urllib.parse import quote, unquote
+import html as html_parser
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, Request, Response
@@ -56,7 +57,7 @@ def search_pornhub_with_ytdlp(q: str, page: int):
                     vkey = entry.get('url').split('viewkey=')[1].split('&')[0]
                 if not vkey: continue
                 
-                title = entry.get('title', 'Unknown Video')
+                title = html_parser.unescape(entry.get('title', 'Unknown Video'))
                 thumb = entry.get('thumbnail', '')
                 if not thumb and entry.get('thumbnails'):
                     thumb = entry.get('thumbnails')[0].get('url', '')
@@ -173,7 +174,7 @@ def extract_with_ytdlp(url: str) -> dict:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
 
-            title = info.get('title', 'Unknown Video')
+            title = html_parser.unescape(info.get('title', 'Unknown Video'))
             duration = info.get('duration', 0)
             upload_date = info.get('upload_date', '') 
             view_count = info.get('view_count', 0)
@@ -324,12 +325,27 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
             seen_urls = set()
 
             if provider == "youporn":
-                all_anchors = tree.xpath('//a[contains(@href, "/watch/")]')
-                for anchor in all_anchors:
-                    href = anchor.get('href')
-                    if not href: continue
-                    full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
-                    
+                # Robust extraction looping through search result item wrappers
+                items = tree.xpath('//div[contains(@class, "videoBox")] | //div[contains(@class, "video-box")] | //div[contains(@class, "pb-card")] | //li[contains(@class, "video-tile")] | //div[contains(@class, "list-item")] | //div[@id="searchResult"]//div[contains(@class, "video")]')
+                if not items:
+                    items = tree.xpath('//a[contains(@href, "/watch/")]')
+
+                for item in items:
+                    full_url = ""
+                    title = ""
+                    thumb = ""
+                    vid_id = ""
+
+                    if item.tag == 'a':
+                        href = item.get('href')
+                        if not href or '/watch/' not in href: continue
+                        full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
+                    else:
+                        link_elems = item.xpath('.//a[contains(@href, "/watch/")]/@href')
+                        if not link_elems: continue
+                        href = link_elems[0]
+                        full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
+
                     full_url = full_url.split('?')[0].rstrip('/')
                     if not re.search(r'/watch/\d+', full_url) or full_url in seen_urls:
                         continue
@@ -338,33 +354,26 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     vid_parts = [p for p in full_url.split('/') if p]
                     vid_id = vid_parts[-1] if vid_parts else "unknown"
 
-                    container = anchor.xpath('./ancestor::div[contains(@class, "video") or contains(@class, "pb-card") or contains(@class, "item") or contains(@class, "tile") or contains(@class, "list-item") or contains(@class, "video-box")][1]')
-                    
-                    title = ""
-                    thumb = ""
-                    
-                    if container:
-                        # Extract title properly and filter out duration metadata (e.g. '23:51') or raw numeric strings
-                        title_candidates = container[0].xpath('.//@title | .//img/@alt | .//p[contains(@class, "title")]//text() | .//span[contains(@class, "title")]//text() | .//a/text() | .//div[contains(@class,"title")]//text()')
+                    if item.tag != 'a':
+                        # Pull title attributes or text nodes from card inner children, filtering out video lengths and numeric IDs
+                        title_candidates = item.xpath('.//a[contains(@href, "/watch/")]/@title | .//img/@alt | .//p[contains(@class, "title")]//text() | .//span[contains(@class, "title")]//text() | .//a/text() | .//div[contains(@class,"title")]//text()')
                         for t in title_candidates:
-                            clean_t = t.strip()
+                            clean_t = html_parser.unescape(t.strip())
                             if clean_t and len(clean_t) > 3 and not re.match(r'^\d{1,2}:\d{2}(?::\d{2})?$', clean_t) and not clean_t.isdigit() and "youporn" not in clean_t.lower():
                                 title = clean_t
                                 break
-                        
-                        img_elems = container[0].xpath('.//img')
+
+                        img_elems = item.xpath('.//img')
                         if img_elems:
                             thumb = img_elems[0].get('data-src') or img_elems[0].get('src') or img_elems[0].get('data-lazy-src') or img_elems[0].get('data-image') or ""
-                    
-                    if not title or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title):
-                        title = anchor.get('title') or ""
-                        if not title or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title):
-                            title = vid_id.replace('-', ' ').title()
-
-                    if not thumb:
-                        img_elems = anchor.xpath('.//img')
+                    else:
+                        title = html_parser.unescape(item.get('title') or item.text_content().strip())
+                        img_elems = item.xpath('.//img')
                         if img_elems:
                             thumb = img_elems[0].get('data-src') or img_elems[0].get('src') or img_elems[0].get('data-lazy-src') or ""
+
+                    if not title or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title):
+                        title = vid_id.replace('-', ' ').title()
 
                     videos.append({
                         "vkey": vid_id,
@@ -389,7 +398,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     vid_id = vid_parts[-1] if vid_parts else "unknown"
 
                     title_elems = item.xpath('.//a/@title | .//img/@alt | .//span[@class="title"]/text() | .//a/text() | .//p/text()')
-                    title = next((t.strip() for t in title_elems if t and len(t.strip()) > 3 and "redtube" not in t.lower() and not re.match(r'^\d{1,2}:\d{2}', t.strip())), "Unknown Video")
+                    title = next((html_parser.unescape(t.strip()) for t in title_elems if t and len(t.strip()) > 3 and "redtube" not in t.lower() and not re.match(r'^\d{1,2}:\d{2}', t.strip())), "Unknown Video")
 
                     raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
                     thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t), "")
@@ -413,7 +422,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     vid_id = vid_parts[-1] if vid_parts else "unknown"
 
                     title_elems = item.xpath('.//a[contains(@class, "video-thumb__title")]/text() | .//a/@title | .//img/@alt | .//h4/text() | .//p/text()')
-                    title = next((t.strip() for t in title_elems if t and len(t.strip()) > 3 and "unknown" not in t.lower()), "Unknown Video")
+                    title = next((html_parser.unescape(t.strip()) for t in title_elems if t and len(t.strip()) > 3 and "unknown" not in t.lower()), "Unknown Video")
 
                     raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
                     thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t), "")
@@ -434,7 +443,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 
                     vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
                     title_elems = item.xpath('.//div[@class="thumb-under"]//a/@title | .//div[@class="thumb-under"]//a/text() | .//a/@title')
-                    title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
+                    title = next((html_parser.unescape(t.strip()) for t in title_elems if t and t.strip()), "Unknown Video")
 
                     raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
                     thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
@@ -459,7 +468,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     seen_urls.add(full_url)
 
                     title_elems = item.xpath('.//p[@class="title"]//a/@title | .//p[@class="title"]//a/text() | .//a/@title')
-                    title = next((t.strip() for t in title_elems if t and t.strip()), "Unknown Video")
+                    title = next((html_parser.unescape(t.strip()) for t in title_elems if t and t.strip()), "Unknown Video")
 
                     raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//div[@data-videothumb]/@data-videothumb')
                     thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and "lightbox" not in t), "")
@@ -496,7 +505,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                     seen_urls.add(full_url)
 
                     title_elem = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title')
-                    title = next((t.strip() for t in title_elem if t and len(t.strip()) > 3), "Unknown Video")
+                    title = next((html_parser.unescape(t.strip()) for t in title_elem if t and len(t.strip()) > 3), "Unknown Video")
 
                     raw_thumbs = item.xpath('.//img/@data-thumb_url | .//img/@data-mediumthumb | .//img/@data-image | .//img/@data-src | .//img/@src')
                     thumb = ""
@@ -625,7 +634,7 @@ async def proxy_video(request: Request, url: str):
         resp = await client.send(req, stream=True)
         
         resp_headers = {
-            "Access-Control-Allow-Origin": "...",
+            "Access-Control-Allow-Origin": "*",
             "Accept-Ranges": "bytes"
         }
         for k in ["Content-Type", "Content-Length", "Content-Range"]:
