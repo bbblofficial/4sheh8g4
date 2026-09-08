@@ -207,12 +207,17 @@ async def search_provider_robust(provider: str, q: str, page: int):
                 title = ""
                 if title_tag:
                     title = title_tag.get('title') or title_tag.get_text(strip=True)
-                if not title or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title) or 'redtube' in title.lower():
+                
+                if not title or title == vid_id or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title) or 'redtube' in title.lower():
                     alt_title = a_tag.get('title', '')
-                    if alt_title and not alt_title.isdigit() and not re.match(r'^\d{1,2}:\d{2}', alt_title):
+                    if alt_title and alt_title != vid_id and not alt_title.isdigit() and not re.match(r'^\d{1,2}:\d{2}', alt_title):
                         title = alt_title
                     else:
-                        title = vid_id.replace('-', ' ').title()
+                        img_alt = item.select_one('img[alt]')
+                        if img_alt and img_alt.get('alt') and img_alt.get('alt') != vid_id:
+                            title = img_alt.get('alt')
+                        else:
+                            title = vid_id.replace('-', ' ').title()
 
                 img_tag = item.select_one('img')
                 thumb = ""
@@ -329,6 +334,16 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                 view_count = 0
                 upload_date = ""
                 poster_url = ""
+                scraped_title = ""
+
+                og_title = soup.find('meta', property='og:title')
+                if og_title and og_title.get('content'):
+                    scraped_title = og_title.get('content').replace('&amp;', '&').strip()
+
+                if not scraped_title:
+                    title_tag = soup.find('title')
+                    if title_tag:
+                        scraped_title = title_tag.get_text().replace('&amp;', '&').split('- RedTube')[0].split('- Pornhub')[0].strip()
 
                 og_img = soup.find('meta', property='og:image')
                 if og_img and og_img.get('content'):
@@ -353,11 +368,10 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                 if date_match:
                     upload_date = date_match.group(0)
 
-                if poster_url:
-                    return {"view_count": view_count, "upload_date": upload_date, "thumbnail": poster_url}
+                return {"view_count": view_count, "upload_date": upload_date, "thumbnail": poster_url, "title": scraped_title}
         except Exception:
             pass
-    return {"view_count": 0, "upload_date": "", "thumbnail": ""}
+    return {"view_count": 0, "upload_date": "", "thumbnail": "", "title": ""}
 
 def extract_with_ytdlp(url: str) -> dict:
     is_pornhub = "pornhub.com" in url
@@ -399,13 +413,19 @@ def extract_with_ytdlp(url: str) -> dict:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
 
-            title = html_parser.unescape(info.get('title', 'Unknown Video'))
+            title = html_parser.unescape(info.get('title', ''))
             duration = info.get('duration', 0)
             upload_date = info.get('upload_date', '') 
             view_count = info.get('view_count', 0)
 
             extra_meta = parse_metadata_fallback(url, provider)
             
+            if not title or title.isdigit() or len(title) <= 8 and title.isalnum():
+                if extra_meta.get("title"):
+                    title = extra_meta.get("title")
+            if not title:
+                title = "Unknown Video"
+
             view_count = view_count or extra_meta.get("view_count", 0)
             upload_date = upload_date or extra_meta.get("upload_date", "")
             
@@ -618,12 +638,12 @@ async def proxy_video(request: Request, url: str):
                     
             async def stream_generator():
                 try:
-                    async for chunk in resp.aiter_bytes(chunk_size=65536):
+                    async async for chunk in resp.iter_bytes(chunk_size=65536):
                         yield chunk
                 finally:
                     await client.aclose()
 
-            return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp_headers)
+            return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp.headers)
     except Exception:
         await client.aclose()
     return Response(status_code=502)
