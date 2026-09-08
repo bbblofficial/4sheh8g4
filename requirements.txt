@@ -1,7 +1,8 @@
 fastapi
 uvicorn
-requests
-lxml
 httpx
+lxml
+beautifulsoup4
 yt-dlp
 cachetools
+requests
