@@ -324,8 +324,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
             seen_urls = set()
 
             if provider == "youporn":
-                # Robust extraction specifically targeting YouPorn search result structures
-                cards = tree.xpath('//div[contains(@class, "video-box")] | //div[contains(@class, "pb-card")] | //div[contains(@class, "list-item")] | //li[contains(@class, "video-tile")] | //div[@id="searchResult"]//div[contains(@class, "video")]')
+                cards = tree.xpath('//div[contains(@class, "video-box")] | //div[contains(@class, "pb-card")] | //div[contains(@class, "list-item")] | //li[contains(@class, "video-tile")] | //div[@id="searchResult"]//div[contains(@class, "video")] | //div[contains(@class, "videoBox")]')
                 if not cards:
                     cards = tree.xpath('//a[contains(@href, "/watch/")]')
 
