@@ -298,21 +298,17 @@ async def search_provider_robust(provider: str, q: str, page: int):
         'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc; yp_access_confirmed=1; accessAgeConfirmed=1;'
     }
 
-    videos = await fetch_page_videos(provider, q, page, headers)
-    seen = {v["url"] for v in videos}
-
+    raw_videos = await fetch_page_videos(provider, q, page, headers)
+    
     current_page = page
-    while len(videos) < 40 and current_page < page + 5:
+    while len(raw_videos) < 40 and current_page < page + 5:
         current_page += 1
         more_videos = await fetch_page_videos(provider, q, current_page, headers)
         if not more_videos:
             break
-        for mv in more_videos:
-            if mv["url"] not in seen:
-                seen.add(mv["url"])
-                videos.append(mv)
+        raw_videos.extend(more_videos)
 
-    if not videos:
+    if not raw_videos:
         try:
             if provider == "youporn":
                 search_url = f"https://www.youporn.com/search/?query={quote(q)}&page={page}"
@@ -350,18 +346,30 @@ async def search_provider_robust(provider: str, q: str, page: int):
                         if not thumb and entry.get('thumbnails'):
                             thumb = entry.get('thumbnails')[0].get('url', '')
 
-                        v_item = {
+                        raw_videos.append({
                             "vkey": vkey, "title": title, "thumbnail": thumb,
                             "url": url if url.startswith('http') else search_url, "provider": provider
-                        }
-                        if v_item["url"] not in seen:
-                            seen.add(v_item["url"])
-                            videos.append(v_item)
+                        })
         except Exception as e:
             logger.error(f"yt-dlp flat fallback search error for {provider}: {e}")
 
-    search_cache[cache_key] = videos
-    return videos
+    seen_urls = set()
+    seen_titles = set()
+    unique_videos = []
+    
+    for v in raw_videos:
+        u = v.get("url", "").split('?')[0].rstrip('/')
+        t = v.get("title", "").strip().lower()
+        if not u or not t:
+            continue
+        if u in seen_urls or t in seen_titles:
+            continue
+        seen_urls.add(u)
+        seen_titles.add(t)
+        unique_videos.append(v)
+
+    search_cache[cache_key] = unique_videos
+    return unique_videos
 
 def parse_metadata_fallback(url: str, provider: str) -> dict:
     base_domain = "https://www.pornhub.com"
@@ -700,7 +708,7 @@ async def proxy_video(request: Request, url: str):
                 finally:
                     await client.aclose()
 
-            return StreamingResponse(stream_generator(), status_index=resp.status_code, status_code=resp.status_code, headers=resp_headers)
+            return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp_headers)
     except Exception:
         await client.aclose()
     return Response(status_code=502)
