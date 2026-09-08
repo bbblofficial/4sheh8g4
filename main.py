@@ -325,7 +325,6 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
             seen_urls = set()
 
             if provider == "pornhub":
-                # Universal robust XPath for Pornhub search items
                 items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or contains(@class, "videoBox")]')
                 if not items:
                     items = tree.xpath('//ul[@id="videoSearchResult"]//li | //div[contains(@class, "search-video-list")]//li | //div[contains(@class, "pcVideoListItem")]')
@@ -399,9 +398,16 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
                         title = vid_id.replace('-', ' ').title()
 
                     raw_thumbs = item.xpath('.//img/@data-src | .//img/@src | .//img/@data-lazy-src')
-                    thumb = next((t for t in raw_thumbs if t and "data:image" not in t and "blank" not in t and ".svg" not in t), "")
-                    if not thumb and raw_thumbs:
-                        thumb = next((t for t in raw_thumbs if t and ".svg" not in t), "")
+                    thumb = ""
+                    for t in raw_thumbs:
+                        if t and "data:image" not in t and "blank" not in t and ".svg" not in t:
+                            thumb = t
+                            break
+                    if not thumb:
+                        # Fallback for dynamic/srcset attributes
+                        srcset = item.xpath('.//img/@srcset')
+                        if srcset:
+                            thumb = srcset[0].split(',')[0].strip().split(' ')[0]
 
                     videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                     if len(videos) >= 48: break
@@ -622,7 +628,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                     rewritten.append(new_uri)
                     
             return Response(content="\n".join(rewritten), media_type="application/vnd.apple.mpegurl", headers={
-                "Access-Control-Allow-Origin": "...",
+                "Access-Control-Allow-Origin": "*",
                 "Cache-Control": "no-cache, no-store"
             })
     except Exception as e:
