@@ -72,7 +72,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
     if provider == "pornhub":
         try:
             tree = lxml_html.fromstring(html_text)
-            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or @data-video-vkey] | //div[contains(@class, "pcVideoListItem") or contains(@class, "videoblock") or contains(@class, "wrap") or contains(@class, "nf-video")]')
+            items = tree.xpath('//li[contains(@class, "videoblock") or contains(@class, "pcVideoListItem") or contains(@class, "js-pop") or @data-video-vkey] | //div[contains(@class, "pcVideoListItem") or contains(@class, "videoblock") or contains(@class, "wrap") or contains(@class, "nf-video") or contains(@class, "videoBox")]')
             
             seen_ph_vkeys = set()
             for item in items:
@@ -112,7 +112,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
                 title_list = item.xpath('.//span[@class="title"]//a/text() | .//a[contains(@class, "title")]/text() | .//img/@alt | .//a/@title | .//span[@class="title"]/text() | .//div[contains(@class,"title")]//text()')
                 title = "Unknown Video"
                 for t in title_list:
-                    if t and t.strip() and not t.strip().isdigit() and len(t.strip()) > 2:
+                    if t and t.strip() and not t.strip().isdigit() and len(t.strip()) > 2 and "pornhub" not in t.lower():
                         title = t.strip()
                         break
 
