@@ -74,28 +74,31 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
     soup = BeautifulSoup(html_text, 'html.parser')
 
     if provider == "pornhub":
-        items = soup.select('li.pcVideoListItem, div.videoblock, div.wrap, li[data-video-vkey], div.videoBox, [data-video-vkey]')
+        items = soup.select('li.pcVideoListItem, div.videoblock, div.wrap, li[data-video-vkey], div.videoBox, [data-video-vkey], div.search-video-thumbs li')
+        if not items:
+            items = soup.find_all(True, {'data-video-vkey': True})
+        
+        seen_found_vkeys = set()
         for item in items:
             vkey = item.get('data-video-vkey', '')
-            a_tag = item.select_one('a[href*="/view_video.php?viewkey="]')
-            
-            if not vkey and a_tag:
-                href = a_tag.get('href', '')
-                match_vkey = re.search(r'viewkey=([a-zA-Z0-9]+)', href)
-                if match_vkey:
-                    vkey = match_vkey.group(1)
             
             if not vkey:
-                match_vkey_str = re.search(r'viewkey=([a-zA-Z0-9]+)', str(item))
-                if match_vkey_str:
-                    vkey = match_vkey_str.group(1)
+                a_with_vk = item.select_one('a[href*="viewkey="]')
+                if a_with_vk:
+                    m_vk = re.search(r'viewkey=([a-zA-Z0-9]+)', a_with_vk.get('href', ''))
+                    if m_vk: vkey = m_vk.group(1)
 
             if not vkey:
+                m_str = re.search(r'viewkey=([a-zA-Z0-9]+)', str(item))
+                if m_str: vkey = m_str.group(1)
+
+            if not vkey or vkey in seen_found_vkeys:
                 continue
+            seen_found_vkeys.add(vkey)
 
             full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
 
-            title_tag = item.select_one('span.title a, a[title], img[alt], .title a')
+            title_tag = item.select_one('span.title a, a[title], img[alt], .title a, a.title')
             title = ""
             if title_tag:
                 title = title_tag.get('title') or title_tag.get('alt') or title_tag.get_text(strip=True)
@@ -724,7 +727,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                             rewritten.append(new_uri)
 
                     return Response(content="\n".join(rewritten), media_type="application/vnd.apple.mpegurl", headers={
-                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Origin": "~",
                         "Cache-Control": "no-cache, no-store"
                     })
             except Exception:
