@@ -346,7 +346,24 @@ async def search_provider_robust(provider: str, q: str, page: int):
         raw_videos.extend(page_videos)
         current_page += 1
 
-    if not raw_videos:
+    seen_vkeys = set()
+    seen_urls = set()
+    unique_videos = []
+
+    for v in raw_videos:
+        vk = str(v.get("vkey", "")).strip()
+        u = v.get("url", "").split('?')[0].rstrip('/')
+        if not vk and not u:
+            continue
+        if vk in seen_vkeys or u in seen_urls:
+            continue
+        if vk:
+            seen_vkeys.add(vk)
+        if u:
+            seen_urls.add(u)
+        unique_videos.append(v)
+
+    if not unique_videos:
         try:
             if provider == "youporn":
                 search_url = f"https://www.youporn.com/search/?query={quote(q)}&page={page}"
@@ -384,29 +401,19 @@ async def search_provider_robust(provider: str, q: str, page: int):
                         if not thumb and entry.get('thumbnails'):
                             thumb = entry.get('thumbnails')[0].get('url', '')
 
-                        raw_videos.append({
+                        vk = str(vkey).strip()
+                        u = (url if url.startswith('http') else search_url).split('?')[0].rstrip('/')
+                        if vk in seen_vkeys or u in seen_urls:
+                            continue
+                        if vk: seen_vkeys.add(vk)
+                        if u: seen_urls.add(u)
+
+                        unique_videos.append({
                             "vkey": vkey, "title": title, "thumbnail": thumb,
                             "url": url if url.startswith('http') else search_url, "provider": provider
                         })
         except Exception as e:
             logger.error(f"yt-dlp flat fallback search error for {provider}: {e}")
-
-    seen_vkeys = set()
-    seen_urls = set()
-    unique_videos = []
-
-    for v in raw_videos:
-        vk = str(v.get("vkey", "")).strip()
-        u = v.get("url", "").split('?')[0].rstrip('/')
-        if not vk and not u:
-            continue
-        if vk in seen_vkeys or u in seen_urls:
-            continue
-        if vk:
-            seen_vkeys.add(vk)
-        if u:
-            seen_urls.add(u)
-        unique_videos.append(v)
 
     search_cache[cache_key] = unique_videos
     return unique_videos
