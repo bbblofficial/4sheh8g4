@@ -80,11 +80,11 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
             if not a_tag: continue
             href = a_tag.get('href', '')
             full_url = href if href.startswith('http') else f"https://www.pornhub.com{href}"
-            full_url = full_url.split('?')[0] + f"?viewkey={re.search(r'viewkey=([a-zA-Z0-9]+)', href).group(1)}" if 'viewkey=' in href else full_url
-
+            
             match_vkey = re.search(r'viewkey=([a-zA-Z0-9]+)', full_url)
             if not match_vkey: continue
             vkey = match_vkey.group(1)
+            full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
 
             title_tag = item.select_one('span.title a, a[title], img[alt]')
             title = ""
@@ -627,6 +627,19 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
     res = await search_provider_robust(provider, q, page)
     return JSONResponse(res)
 
+@app.get("/api/search")
+async def text_search(q: str, page: int = 1, provider: str = "pornhub"):
+    if not q:
+        return JSONResponse({"status": "error", "error": "Missing search query"}, status_code=400)
+    res = await search_provider_robust(provider, q.strip(), page)
+    return JSONResponse({
+        "status": "success",
+        "query": q,
+        "page": page,
+        "provider": provider,
+        "results": res
+    })
+
 @app.get("/api/extract")
 async def extract_endpoint(url: str):
     if not url: return JSONResponse({"status": "error", "error": "Missing URL"})
@@ -735,6 +748,7 @@ async def proxy_video(request: Request, url: str):
 
             async def stream_generator():
                 try:
+                    async open as chunk: # placeholder for standard safe generator pattern
                     async for chunk in resp.aiter_bytes(chunk_size=65536):
                         yield chunk
                 finally:
