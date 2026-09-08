@@ -184,9 +184,21 @@ async def search_provider_robust(provider: str, q: str, page: int):
                     if srcset:
                         thumb = srcset.split(',')[0].strip().split(' ')[0]
                 if not thumb:
-                    poster_attr = item.select_one('[data-poster]')
+                    poster_attr = item.select_one('[data-poster], [data-image], [data-src]')
                     if poster_attr:
-                        thumb = poster_attr.get('data-poster', '')
+                        thumb = (poster_attr.get('data-poster') or poster_attr.get('data-image') or poster_attr.get('data-src') or '')
+
+                if not thumb or 'svg' in thumb:
+                    source_tag = item.select_one('source')
+                    if source_tag:
+                        srcset = source_tag.get('srcset', '')
+                        if srcset:
+                            thumb = srcset.split(',')[0].strip().split(' ')[0]
+
+                if not thumb or 'svg' in thumb:
+                    match_img = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', str(item))
+                    if match_img:
+                        thumb = match_img.group(0)
 
                 videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                 if len(videos) >= 48: break
@@ -347,7 +359,7 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                 if not scraped_title:
                     title_tag = soup.find('title')
                     if title_tag:
-                        scraped_title = title_tag.get_text().replace('&amp;', '&').split('- RedTube')[0].split('- Pornhub')[0].split('- YouPorn')[0].strip()
+                        scraped_title = title_tag.get_text().replace('&amp;', '&').split('- RedTube')[0].split('- Pornhub')[0].split('- YouPorn')[0].split('- xHamster')[0].strip()
 
                 og_img = soup.find('meta', property='og:image')
                 if og_img and og_img.get('content'):
@@ -445,7 +457,7 @@ def extract_with_ytdlp(url: str) -> dict:
                 if t.get('url') and t.get('url') not in all_thumbs:
                     all_thumbs.append(t.get('url'))
 
-            clean_thumbs = [t for t in all_thumbs if 'hash=' not in t and 'validto=' not in t and 'hdnea=' not in t]
+            clean_thumbs = [t for t in all_thumbs if 'hash=' not in t and 'validto=' not in t and 'hdnea=' not in t and 'svg' not in t]
             
             if clean_thumbs:
                 thumbnail = clean_thumbs[0]
@@ -652,6 +664,7 @@ async def proxy_video(request: Request, url: str):
         await client.aclose()
     return Response(status_code=502)
 
+@app.get("/health")
 @app.get("/")
 def health():
     return {"status": "Online", "engine": "Fast Edge Extraction Engine"}
