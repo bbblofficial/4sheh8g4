@@ -31,162 +31,242 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def search_youporn_with_bs4_and_ytdlp(q: str, page: int):
+def search_provider_robust(provider: str, q: str, page: int):
     videos = []
-    search_url = f"https://www.youporn.com/search/?query={quote(q)}&page={page}"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc; yp_access_confirmed=1;'
+        'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc; yp_access_confirmed=1; accessAgeConfirmed=1;'
     }
 
-    # Method 1: BeautifulSoup HTML Scraping
+    if provider == "youporn":
+        search_url = f"https://www.youporn.com/search/?query={quote(q)}&page={page}"
+        headers['Referer'] = 'https://www.youporn.com/'
+    elif provider == "xhamster":
+        search_url = f"https://xhamster.com/search/{quote(q)}" if page <= 1 else f"https://xhamster.com/search/{quote(q)}/{page}"
+        headers['Referer'] = 'https://xhamster.com/'
+    elif provider == "redtube":
+        search_url = f"https://www.redtube.com/?search={quote(q)}" if page <= 1 else f"https://www.redtube.com/?search={quote(q)}&page={page}"
+        headers['Referer'] = 'https://www.redtube.com/'
+    elif provider == "xnxx":
+        search_url = f"https://www.xnxx.com/search/{quote(q)}" if page <= 1 else f"https://www.xnxx.com/search/{quote(q)}/{page}"
+        headers['Referer'] = 'https://www.xnxx.com/'
+    elif provider == "xvideos":
+        p_val = page - 1 if page > 1 else 0
+        search_url = f"https://www.xvideos.com/?k={quote(q)}" if p_val == 0 else f"https://www.xvideos.com/?k={quote(q)}&p={p_val}"
+        headers['Referer'] = 'https://www.xvideos.com/'
+    else:
+        search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
+        headers['Referer'] = 'https://www.pornhub.com/'
+
     for attempt in range(5):
         try:
             import requests
             resp = requests.get(search_url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
-                # Find all video links matching /watch/
-                watch_links = soup.select('a[href*="/watch/"]')
                 seen = set()
-                
-                for a in watch_links:
-                    href = a.get('href', '')
-                    if not href or '/watch/' not in href: continue
-                    full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
-                    full_url = full_url.split('?')[0].rstrip('/')
-                    
-                    match_id = re.search(r'/watch/(\d+)', full_url)
-                    if not match_id: continue
-                    vkey = match_id.group(1)
-                    
-                    if full_url in seen: continue
-                    seen.add(full_url)
 
-                    # Extract title & thumbnail using multiple robust selectors
-                    title = a.get('title', '').strip()
-                    thumb = ""
-                    
-                    # Look for parent container card
-                    card = a.find_parent(['div', 'li', 'article'])
-                    if card:
-                        if not title or len(title) < 3 or title.isdigit() or 'youporn' in title.lower():
-                            t_tag = card.select_one('.title, h3, h4, [class*="title"]')
-                            if t_tag:
-                                title = t_tag.get_text(strip=True)
+                if provider == "youporn":
+                    items = soup.select('div.video-box, div.pb-card, div.list-item, li.video-tile, div.videoBox, div.videoListItem, div[class*="video"], div.video-tile')
+                    if not items:
+                        items = soup.select('a[href*="/watch/"]')
+
+                    for item in items:
+                        full_url = ""
+                        title = ""
+                        thumb = ""
                         
-                        img_tag = card.select_one('img')
-                        if img_tag:
-                            thumb = img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or ""
-                    
-                    if not thumb:
-                        img_tag = a.select_one('img')
-                        if img_tag:
-                            thumb = img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or ""
+                        if item.name == 'a':
+                            href = item.get('href', '')
+                            if not href or '/watch/' not in href: continue
+                            full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
+                            title = item.get('title') or item.get_text(strip=True)
+                            
+                            img_tag = item.select_one('img')
+                            if img_tag:
+                                thumb = img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or ""
+                        else:
+                            a_tag = item.select_one('a[href*="/watch/"]')
+                            if not a_tag: continue
+                            href = a_tag.get('href', '')
+                            full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
+                            
+                            title_tag = item.select_one('a[href*="/watch/"] [title], p.title, span.title, a, div.title, h3, h4')
+                            title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else a_tag.get('title', '')
+                            
+                            img_tag = item.select_one('img')
+                            if img_tag:
+                                thumb = img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or ""
 
-                    if not title or title.isdigit() or len(title) < 3:
-                        title = a.get_text(strip=True)
-                    if not title or title.isdigit() or len(title) < 3 or 'youporn' in title.lower():
-                        title = f"YouPorn Video {vkey}"
+                        full_url = full_url.split('?')[0].rstrip('/')
+                        if not full_url or full_url in seen: continue
+                        seen.add(full_url)
 
-                    videos.append({
-                        "vkey": vkey,
-                        "title": html_parser.unescape(title),
-                        "thumbnail": thumb,
-                        "url": full_url,
-                        "provider": "youporn"
-                    })
-                    if len(videos) >= 48:
-                        break
+                        match_id = re.search(r'/watch/(\d+)', full_url)
+                        if not match_id: continue
+                        vkey = match_id.group(1)
+
+                        if not title or title.isdigit() or re.match(r'^\d{1,2}:\d{2}', title) or 'youporn' in title.lower():
+                            title = f"YouPorn Video {vkey}"
+
+                        videos.append({
+                            "vkey": vkey,
+                            "title": html_parser.unescape(title),
+                            "thumbnail": thumb,
+                            "url": full_url,
+                            "provider": "youporn"
+                        })
+                        if len(videos) >= 48: break
+
+                elif provider == "pornhub":
+                    items = soup.select('li.videoblock, li.pcVideoListItem, li.js-pop, li.videoBox, ul#videoSearchResult li, div.search-video-list li')
+                    for item in items:
+                        vkey = item.get("data-video-vkey")
+                        if not vkey:
+                            a_tag = item.select_one('a[href*="viewkey="], a[href*="/view_video.php"], a[href*="/video/"]')
+                            if a_tag:
+                                h = a_tag.get('href', '')
+                                if "viewkey=" in h:
+                                    try: vkey = h.split("viewkey=")[1].split("&")[0]
+                                    except: pass
+                                elif "/video/" in h:
+                                    parts = [p for p in h.split('/') if p]
+                                    if parts: vkey = parts[-1]
+                        if not vkey: continue
+                        full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
+                        if full_url in seen: continue
+                        seen.add(full_url)
+
+                        title_tag = item.select_one('.title a, a.title, img[alt]')
+                        title = title_tag.get('alt') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
+                        
+                        img_tag = item.select_one('img')
+                        thumb = img_tag.get('data-thumb_url') or img_tag.get('data-mediumthumb') or img_tag.get('data-image') or img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or "" if img_tag else ""
+
+                        videos.append({"vkey": vkey, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "pornhub"})
+                        if len(videos) >= 48: break
+
+                elif provider == "xhamster":
+                    items = soup.select('div.video-thumb, div.thumb-list__item, div.video-container, div.cell, article, div.video-thumb-info')
+                    for item in items:
+                        a_tag = item.select_one('a[href*="/videos/"], a[href*="/movie/"]')
+                        if not a_tag: continue
+                        href = a_tag.get('href', '')
+                        full_url = href if href.startswith('http') else f"https://xhamster.com{href}"
+                        full_url = full_url.split('?')[0].rstrip('/')
+                        if full_url in seen: continue
+                        seen.add(full_url)
+                        
+                        vid_parts = [p for p in full_url.split('/') if p]
+                        vid_id = vid_parts[-1] if vid_parts else "unknown"
+
+                        title_tag = item.select_one('a.video-thumb__title, a[title], h4, p')
+                        title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else vid_id.replace('-', ' ').title()
+
+                        img_tag = item.select_one('img')
+                        thumb = img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or "" if img_tag else ""
+
+                        videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
+                        if len(videos) >= 48: break
+
+                elif provider == "redtube":
+                    items = soup.select('div.videoBox, li.videoblock, div.video-item, div.pb-card')
+                    for item in items:
+                        a_tag = item.select_one('a[href]')
+                        if not a_tag: continue
+                        href = a_tag.get('href', '')
+                        full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
+                        if full_url in seen: continue
+                        seen.add(full_url)
+
+                        vid_parts = [p for p in full_url.split('/') if p]
+                        vid_id = vid_parts[-1] if vid_parts else "unknown"
+
+                        title_tag = item.select_one('a[title], span.title, a, p')
+                        title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
+
+                        img_tag = item.select_one('img')
+                        thumb = img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or "" if img_tag else ""
+
+                        videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "redtube"})
+                        if len(videos) >= 48: break
+
+                elif provider == "xnxx":
+                    items = soup.select('div.mozaique div.thumb-block')
+                    for item in items:
+                        a_tag = item.select_one('a[href*="/video-"], a[href*="/video."]')
+                        if not a_tag: continue
+                        href = a_tag.get('href', '')
+                        full_url = f"https://www.xnxx.com{href}" if href.startswith('/') else href
+                        if full_url in seen: continue
+                        seen.add(full_url)
+
+                        vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
+                        title_tag = item.select_one('div.thumb-under a[title], div.thumb-under a')
+                        title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
+
+                        img_tag = item.select_one('img')
+                        thumb = img_tag.get('data-src') or img_tag.get('src') or item.select_one('[data-videothumb]').get('data-videothumb', '') if img_tag else ""
+
+                        videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xnxx"})
+                        if len(videos) >= 48: break
+
+                elif provider == "xvideos":
+                    items = soup.select('div.mozaique div.thumb-block')
+                    for item in items:
+                        a_tag = item.select_one('p.title a, a[href*="/video."]')
+                        if not a_tag: continue
+                        href = a_tag.get('href', '')
+                        vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
+                        clean_href = href.rstrip('/')
+                        if clean_href.endswith('_') or clean_href.endswith('/_') or len(clean_href.split('/')) < 3:
+                            clean_href = f"/{vid_id}/video_stream"
+                        full_url = f"https://www.xvideos.com{clean_href}" if clean_href.startswith('/') else clean_href
+                        if full_url in seen: continue
+                        seen.add(full_url)
+
+                        title_tag = item.select_one('p.title a')
+                        title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
+
+                        img_tag = item.select_one('img')
+                        thumb = img_tag.get('data-src') or img_tag.get('src') or "" if img_tag else ""
+
+                        videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xvideos"})
+                        if len(videos) >= 48: break
+
                 if len(videos) > 0:
                     return videos
         except Exception as e:
-            logger.error(f"YouPorn BS4 search attempt {attempt+1} error: {e}")
+            logger.error(f"Search provider {provider} attempt {attempt+1} error: {e}")
             time.sleep(1.0)
 
-    # Method 2: Fallback to yt-dlp flat extraction if BS4 returns nothing
-    try:
-        ydl_opts = {
-            'quiet': True,
-            'extract_flat': True,
-            'nocheckcertificate': True,
-            'http_headers': headers
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(search_url, download=False)
-            if info:
-                for entry in info.get('entries', []):
-                    if not entry: continue
-                    url = entry.get('url', '')
-                    vkey = entry.get('id', '')
-                    if not vkey and '/watch/' in url:
-                        parts = [p for p in url.split('/') if p]
-                        vkey = parts[1] if len(parts) > 1 and parts[0] == 'watch' else (parts[-1] if parts else "")
-                    if not vkey: continue
-                    title = html_parser.unescape(entry.get('title', f"YouPorn Video {vkey}"))
-                    thumb = entry.get('thumbnail', '')
-                    if not thumb and entry.get('thumbnails'):
-                        thumb = entry.get('thumbnails')[0].get('url', '')
-                    full_url = url if url.startswith('http') else f"https://www.youporn.com/watch/{vkey}/"
-                    videos.append({
-                        "vkey": vkey,
-                        "title": title,
-                        "thumbnail": thumb,
-                        "url": full_url,
-                        "provider": "youporn"
-                    })
-                    if len(videos) >= 48: break
-    except Exception as e:
-        logger.error(f"YouPorn yt-dlp fallback search error: {e}")
+    # Fallback to yt-dlp flat extraction if BS4 returns empty
+    if provider == "pornhub":
+        ydl_opts = {'quiet': True, 'extract_flat': True, 'nocheckcertificate': True, 'http_headers': headers}
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(search_url, download=False)
+                if info:
+                    for entry in info.get('entries', []):
+                        if not entry: continue
+                        vkey = entry.get('id')
+                        if not vkey and entry.get('url') and 'viewkey=' in entry.get('url'):
+                            vkey = entry.get('url').split('viewkey=')[1].split('&')[0]
+                        if not vkey: continue
+                        title = html_parser.unescape(entry.get('title', 'Unknown Video'))
+                        thumb = entry.get('thumbnail', '')
+                        if not thumb and entry.get('thumbnails'):
+                            thumb = entry.get('thumbnails')[0].get('url', '')
+                        videos.append({
+                            "vkey": vkey, "title": title, "thumbnail": thumb,
+                            "url": f"https://www.pornhub.com/view_video.php?viewkey={vkey}", "provider": "pornhub"
+                        })
+                        if len(videos) >= 48: break
+        except Exception as e:
+            logger.error(f"yt-dlp fallback search error: {e}")
 
-    return videos
-
-def search_pornhub_with_ytdlp(q: str, page: int):
-    ydl_opts = {
-        'quiet': True,
-        'extract_flat': True,
-        'nocheckcertificate': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://www.pornhub.com/',
-            'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
-        }
-    }
-    videos = []
-    try:
-        search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(search_url, download=False)
-            if not info: return videos
-            
-            entries = info.get('entries', [])
-            for entry in entries:
-                if not entry: continue
-                
-                vkey = entry.get('id')
-                if not vkey and entry.get('url') and 'viewkey=' in entry.get('url'):
-                    vkey = entry.get('url').split('viewkey=')[1].split('&')[0]
-                if not vkey: continue
-                
-                title = html_parser.unescape(entry.get('title', 'Unknown Video'))
-                thumb = entry.get('thumbnail', '')
-                if not thumb and entry.get('thumbnails'):
-                    thumb = entry.get('thumbnails')[0].get('url', '')
-                    
-                videos.append({
-                    "vkey": vkey,
-                    "title": title,
-                    "thumbnail": thumb,
-                    "url": f"https://www.pornhub.com/view_video.php?viewkey={vkey}",
-                    "provider": "pornhub"
-                })
-                
-                if len(videos) >= 48:
-                    break
-    except Exception as e:
-        logger.error(f"yt-dlp phsearch error: {e}")
     return videos
 
 def parse_metadata_fallback(url: str, provider: str) -> dict:
@@ -218,7 +298,6 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                 upload_date = ""
                 poster_url = ""
 
-                # BS4 Thumbnail extraction via OpenGraph or JSON-LD
                 og_img = soup.find('meta', property='og:image')
                 if og_img and og_img.get('content'):
                     poster_url = og_img.get('content').replace('&amp;', '&')
@@ -403,197 +482,9 @@ def extract_with_ytdlp(url: str) -> dict:
 
 @app.get("/api/explore")
 async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub"):
-    if provider == "youporn":
-        loop = asyncio.get_running_loop()
-        return JSONResponse(await loop.run_in_executor(thread_pool, search_youporn_with_bs4_and_ytdlp, q, page))
-
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cookie': 'accessAgeConfirmed=1; has_accepted_cookie=1; age_verified=1; platform=pc; yp_access_confirmed=1;',
-        'Referer': f'https://www.{provider}.com/' if provider not in ['xhamster'] else 'https://xhamster.com/'
-    }
-
-    if provider == "xhamster":
-        search_url = f"https://xhamster.com/search/{quote(q)}" if page <= 1 else f"https://xhamster.com/search/{quote(q)}/{page}"
-    elif provider == "redtube":
-        search_url = f"https://www.redtube.com/?search={quote(q)}" if page <= 1 else f"https://www.redtube.com/?search={quote(q)}&page={page}"
-    elif provider == "xnxx":
-        search_url = f"https://www.xnxx.com/search/{quote(q)}" if page <= 1 else f"https://www.xnxx.com/search/{quote(q)}/{page}"
-    elif provider == "xvideos":
-        p_val = page - 1 if page > 1 else 0
-        search_url = f"https://www.xvideos.com/?k={quote(q)}" if p_val == 0 else f"https://www.xvideos.com/?k={quote(q)}&p={p_val}"
-    else:
-        search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
-    
-    max_search_retries = 5
-    resp = None
-    for attempt in range(max_search_retries):
-        try:
-            async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
-                resp = await client.get(search_url, headers=headers)
-                if resp.status_code == 200:
-                    break
-        except Exception:
-            if attempt == max_search_retries - 1:
-                if provider == "pornhub":
-                    loop = asyncio.get_running_loop()
-                    return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
-                return JSONResponse([])
-            await asyncio.sleep(1.0)
-
-    if not resp or resp.status_code != 200:
-        if provider == "pornhub":
-            loop = asyncio.get_running_loop()
-            return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
-        return JSONResponse([])
-
-    try:
-        try: html_content = resp.content.decode('utf-8', errors='replace')
-        except Exception: html_content = resp.text
-
-        soup = BeautifulSoup(html_content, 'html.parser')
-        videos = []
-        seen_urls = set()
-
-        if provider == "pornhub":
-            items = soup.select('li.videoblock, li.pcVideoListItem, li.js-pop, li.videoBox, ul#videoSearchResult li, div.search-video-list li')
-            for item in items:
-                vkey = item.get("data-video-vkey")
-                if not vkey:
-                    a_tag = item.select_one('a[href*="viewkey="], a[href*="/view_video.php"], a[href*="/video/"]')
-                    if a_tag:
-                        h = a_tag.get('href', '')
-                        if "viewkey=" in h:
-                            try: vkey = h.split("viewkey=")[1].split("&")[0]
-                            except: pass
-                        elif "/video/" in h:
-                            parts = [p for p in h.split('/') if p]
-                            if parts: vkey = parts[-1]
-                if not vkey: continue
-                full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
-                if full_url in seen_urls: continue
-                seen_urls.add(full_url)
-
-                title_tag = item.select_one('.title a, a.title, img[alt]')
-                title = title_tag.get('alt') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
-                title = html_parser.unescape(title)
-
-                thumb = ""
-                img_tag = item.select_one('img')
-                if img_tag:
-                    thumb = img_tag.get('data-thumb_url') or img_tag.get('data-mediumthumb') or img_tag.get('data-image') or img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or ""
-
-                videos.append({"vkey": vkey, "title": title, "thumbnail": thumb, "url": full_url, "provider": "pornhub"})
-                if len(videos) >= 48: break
-
-            if len(videos) == 0:
-                loop = asyncio.get_running_loop()
-                return JSONResponse(await loop.run_in_executor(thread_pool, search_pornhub_with_ytdlp, q, page))
-
-        elif provider == "xhamster":
-            items = soup.select('div.video-thumb, div.thumb-list__item, div.video-container, div.cell, article, div.video-thumb-info')
-            for item in items:
-                a_tag = item.select_one('a[href*="/videos/"], a[href*="/movie/"]')
-                if not a_tag: continue
-                href = a_tag.get('href', '')
-                full_url = href if href.startswith('http') else f"https://xhamster.com{href}"
-                full_url = full_url.split('?')[0].rstrip('/')
-                if full_url in seen_urls: continue
-                seen_urls.add(full_url)
-                
-                vid_parts = [p for p in full_url.split('/') if p]
-                vid_id = vid_parts[-1] if vid_parts else "unknown"
-
-                title_tag = item.select_one('a.video-thumb__title, a[title], h4, p')
-                title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else vid_id.replace('-', ' ').title()
-                title = html_parser.unescape(title)
-
-                thumb = ""
-                img_tag = item.select_one('img')
-                if img_tag:
-                    thumb = img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or ""
-                
-                videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
-                if len(videos) >= 48: break
-
-        elif provider == "redtube":
-            items = soup.select('div.videoBox, li.videoblock, div.video-item, div.pb-card')
-            for item in items:
-                a_tag = item.select_one('a[href]')
-                if not a_tag: continue
-                href = a_tag.get('href', '')
-                full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
-                if full_url in seen_urls: continue
-                seen_urls.add(full_url)
-
-                vid_parts = [p for p in full_url.split('/') if p]
-                vid_id = vid_parts[-1] if vid_parts else "unknown"
-
-                title_tag = item.select_one('a[title], span.title, a, p')
-                title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
-                title = html_parser.unescape(title)
-
-                thumb = ""
-                img_tag = item.select_one('img')
-                if img_tag:
-                    thumb = img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or ""
-
-                videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "redtube"})
-                if len(videos) >= 48: break
-
-        elif provider == "xnxx":
-            items = soup.select('div.mozaique div.thumb-block')
-            for item in items:
-                a_tag = item.select_one('a[href*="/video-"], a[href*="/video."]')
-                if not a_tag: continue
-                href = a_tag.get('href', '')
-                full_url = f"https://www.xnxx.com{href}" if href.startswith('/') else href
-                if full_url in seen_urls: continue
-                seen_urls.add(full_url)
-
-                vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
-                title_tag = item.select_one('div.thumb-under a[title], div.thumb-under a')
-                title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
-                title = html_parser.unescape(title)
-
-                img_tag = item.select_one('img')
-                thumb = img_tag.get('data-src') or img_tag.get('src') or item.select_one('[data-videothumb]').get('data-videothumb', '') if img_tag else ""
-
-                videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xnxx"})
-                if len(videos) >= 48: break
-
-        elif provider == "xvideos":
-            items = soup.select('div.mozaique div.thumb-block')
-            for item in items:
-                a_tag = item.select_one('p.title a, a[href*="/video."]')
-                if not a_tag: continue
-                href = a_tag.get('href', '')
-                vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
-                clean_href = href.rstrip('/')
-                if clean_href.endswith('_') or clean_href.endswith('/_') or len(clean_href.split('/')) < 3:
-                    clean_href = f"/{vid_id}/video_stream"
-                full_url = f"https://www.xvideos.com{clean_href}" if clean_href.startswith('/') else clean_href
-                if full_url in seen_urls: continue
-                seen_urls.add(full_url)
-
-                title_tag = item.select_one('p.title a')
-                title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
-                title = html_parser.unescape(title)
-
-                img_tag = item.select_one('img')
-                thumb = img_tag.get('data-src') or img_tag.get('src') or ""
-
-                videos.append({"vkey": vid_id, "title": title, "thumbnail": thumb, "url": full_url, "provider": "xvideos"})
-                if len(videos) >= 48: break
-
-        return JSONResponse(videos)
-
-    except Exception as e:
-        logger.error(f"Explore error: {e}")
-        return JSONResponse([])
-
+    loop = asyncio.get_running_loop()
+    res = await loop.run_in_executor(thread_pool, search_provider_robust, provider, q, page)
+    return JSONResponse(res)
 
 @app.get("/api/extract")
 async def extract_endpoint(url: str):
@@ -688,7 +579,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
     return Response(status_code=502, content="Backend Proxy Error")
 
 @app.get("/proxy-video")
-async def proxy_video(request: Request, url: str):
+async def proxy_video(request: Request, url: str, request_host: str = ""):
     target = url.strip()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
