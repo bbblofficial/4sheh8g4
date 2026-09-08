@@ -117,7 +117,9 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
             })
 
     elif provider == "pornhub":
-        items = soup.select('li.videoblock, li.pcVideoListItem, li.js-pop, li.videoBox, ul#videoSearchResult li, div.search-video-list li')
+        items = soup.select('li.videoblock, li.pcVideoListItem, li.js-pop, li.videoBox, ul#videoSearchResult li, div.search-video-list li, div.wrap, div[id*="video"]-')
+        if not items:
+            items = soup.select('ul.videos.row li, li[data-video-vkey]')
         for item in items:
             vkey = item.get("data-video-vkey")
             if not vkey:
@@ -130,12 +132,25 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
                     elif "/video/" in h:
                         parts = [p for p in h.split('/') if p]
                         if parts: vkey = parts[-1]
+            if not vkey:
+                match_vkey = re.search(r'viewkey=([a-zA-Z0-9]+)', str(item))
+                if match_vkey:
+                    vkey = match_vkey.group(1)
             if not vkey: continue
+            
             full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
 
-            title_tag = item.select_one('.title a, a.title, img[alt]')
-            title = title_tag.get('alt') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
-            
+            title_tag = item.select_one('.title a, a.title, img[alt], span.title a, a[title]')
+            title = ""
+            if title_tag:
+                title = title_tag.get('title') or title_tag.get('alt') or title_tag.get_text(strip=True)
+            if not title or title.isdigit() or len(title) <= 2:
+                img_tag = item.select_one('img')
+                if img_tag:
+                    title = img_tag.get('alt', '')
+            if not title:
+                title = f"PornHub Video {vkey}"
+
             img_tag = item.select_one('img')
             thumb = ""
             if img_tag:
