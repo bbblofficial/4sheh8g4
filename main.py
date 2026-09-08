@@ -54,46 +54,45 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
         headers['Referer'] = 'https://www.pornhub.com/'
 
-    # Force using yt-dlp extractor for Pornhub search to bypass layout and anti-bot blocks reliably
     if provider == "pornhub":
         try:
-            ydl_opts = {'quiet': True, 'extract_flat': True, 'nocheckcertificate': True, 'http_headers': headers}
+            ydl_opts = {'quiet': True, 'extract_flat': 'in_playlist', 'nocheckcertificate': True, 'http_headers': headers}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(search_url, download=False)
-                if info and 'entries' in info:
-                    for entry in info.get('entries', []):
-                        if not entry: continue
-                        url = entry.get('url', '')
-                        vkey = entry.get('id', '')
-                        if not vkey and 'viewkey=' in url:
-                            try:
-                                vkey = url.split('viewkey=')[1].split('&')[0]
-                            except:
-                                pass
-                        elif not vkey and '/video/' in url:
-                            parts = [p for p in url.split('/') if p]
-                            if parts:
-                                vkey = parts[-1]
+                entries = info.get('entries', []) if info else []
+                for entry in entries:
+                    if not entry: continue
+                    url = entry.get('url', '')
+                    vkey = entry.get('id', '')
+                    if not vkey and 'viewkey=' in url:
+                        try:
+                            vkey = url.split('viewkey=')[1].split('&')[0]
+                        except:
+                            pass
+                    elif not vkey and '/video/' in url:
+                        parts = [p for p in url.split('/') if p]
+                        if parts:
+                            vkey = parts[-1]
+                    
+                    if not vkey or len(vkey) < 5:
+                        continue
+
+                    title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
+                    if not title or "pornhub" in title.lower():
+                        title = f"Pornhub Video {vkey}"
                         
-                        if not vkey or len(vkey) < 5:
-                            continue
+                    thumb = entry.get('thumbnail', '')
+                    if not thumb and entry.get('thumbnails'):
+                        thumb = entry.get('thumbnails')[0].get('url', '')
 
-                        title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
-                        if not title or "pornhub" in title.lower():
-                            title = f"Pornhub Video {vkey}"
-                            
-                        thumb = entry.get('thumbnail', '')
-                        if not thumb and entry.get('thumbnails'):
-                            thumb = entry.get('thumbnails')[0].get('url', '')
-
-                        full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
-                        videos.append({
-                            "vkey": vkey,
-                            "title": title,
-                            "thumbnail": thumb,
-                            "url": full_url,
-                            "provider": "pornhub"
-                        })
+                    full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
+                    videos.append({
+                        "vkey": vkey,
+                        "title": title,
+                        "thumbnail": thumb,
+                        "url": full_url,
+                        "provider": "pornhub"
+                    })
             if videos:
                 return videos
         except Exception as e:
@@ -361,7 +360,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
             else:
                 search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
 
-            ydl_opts = {'quiet': True, 'extract_flat': True, 'nocheckcertificate': True, 'http_headers': headers}
+            ydl_opts = {'quiet': True, 'extract_flat': 'in_playlist', 'nocheckcertificate': True, 'http_headers': headers}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(search_url, download=False)
                 if info:
