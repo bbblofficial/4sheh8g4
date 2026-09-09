@@ -55,7 +55,6 @@ def clean_media_stream_url(raw_url: str) -> str:
     if not raw_url:
         return ""
     raw_url = raw_url.strip().replace('\\/', '/')
-    # Strip trailing slashes directly following .mp4 or .m3u8 (prevents Nginx 404 directory errors)
     raw_url = re.sub(r'(\.(?:mp4|m3u8|webm|mov|mkv))/+(?=$|\?)', r'\1', raw_url, flags=re.IGNORECASE)
     if re.search(r'\.(?:mp4|m3u8|webm)/+$', raw_url, re.IGNORECASE):
         raw_url = re.sub(r'/+$', '', raw_url)
@@ -90,7 +89,6 @@ def extract_kvs_direct(url: str, provider: str) -> dict:
                 html_text = r.text
                 soup = BeautifulSoup(html_text, 'html.parser')
 
-                # Title
                 title = ""
                 og_title = soup.find('meta', property='og:title')
                 if og_title and og_title.get('content'):
@@ -106,7 +104,6 @@ def extract_kvs_direct(url: str, provider: str) -> dict:
                 if is_invalid_title(title):
                     title = "Video Stream"
 
-                # Thumbnails
                 all_thumbs = []
                 og_img = soup.find('meta', property='og:image')
                 if og_img and og_img.get('content'):
@@ -132,7 +129,6 @@ def extract_kvs_direct(url: str, provider: str) -> dict:
 
                 thumbnail = all_thumbs[0] if all_thumbs else ""
 
-                # Duration
                 duration = 0
                 dur_m = re.search(r'(?:video_duration|duration)\s*:\s*[\'"]?(\d+)[\'"]?', html_text)
                 if dur_m:
@@ -148,7 +144,6 @@ def extract_kvs_direct(url: str, provider: str) -> dict:
                             if m:
                                 duration = int(m.group(1) or 0)*3600 + int(m.group(2) or 0)*60 + int(m.group(3) or 0)
 
-                # Views
                 view_count = 0
                 v_match = re.search(r'([\d,\.]+)\s*(?:Views|views)', html_text)
                 if v_match:
@@ -156,7 +151,6 @@ def extract_kvs_direct(url: str, provider: str) -> dict:
                     if raw_v.isdigit():
                         view_count = int(raw_v)
 
-                # Upload Date
                 upload_date = ""
                 date_tag = soup.find('meta', itemprop='uploadDate') or soup.find('meta', property='video:release_date')
                 if date_tag and date_tag.get('content'):
@@ -166,7 +160,6 @@ def extract_kvs_direct(url: str, provider: str) -> dict:
                     if dm:
                         upload_date = dm.group(1)
 
-                # Quality Streams
                 qualities_map = {}
                 matches = []
                 for m in re.finditer(r'(?:video_url|video_alt_url\d*)\s*:\s*[\'"]([^\'"]+)[\'"]', html_text):
@@ -1143,7 +1136,6 @@ async def proxy_video(request: Request, url: str, sig: str = "", exp: str = "", 
             req = client.build_request("GET", target, headers=headers)
             resp = await client.send(req, stream=True)
 
-            # Fallback Nginx retry: If target has or lacks slash, try the alternate pattern
             if resp.status_code == 404:
                 alt_target = target[:-1] if target.endswith('/') else target + '/'
                 alt_req = client.build_request("GET", alt_target, headers=headers)
