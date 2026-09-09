@@ -3,7 +3,7 @@ import time
 import asyncio
 import logging
 import re
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 import html as html_parser
 from concurrent.futures import ThreadPoolExecutor
 
@@ -832,26 +832,24 @@ async def fallback_proxy_image(url: str):
         except Exception:
             await asyncio.sleep(0.5)
     return Response(status_code=404)
-
 @app.get("/proxy-m3u8")
 async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", request_host: str = ""):
     target = url.strip()
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
-        "Referer": "https://www.youporn.com/",
-        "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
-    }
-    
+    headers = get_dynamic_headers(target)
+
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 resp = await client.get(target, headers=headers)
                 if resp.status_code == 200:
-                    base_url = target.rsplit('/', 1)[0] + '/'
+                    parsed_target = urlparse(target)
+                    base_path = target.split('?')[0].rsplit('/', 1)[0] + '/'
+                    target_query = parsed_target.query
+                    
                     proto = request.headers.get("x-forwarded-proto", "https")
                     if not request_host:
                         request_host = request.headers.get("host", "")
-                    
+
                     lines = resp.text.split('\n')
                     rewritten = []
                     for line in lines:
@@ -862,17 +860,21 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                                 match = re.search(r'URI="([^"]+)"', line)
                                 if match:
                                     uri = match.group(1)
-                                    abs_uri = uri if uri.startswith('http') else base_url + uri
+                                    abs_uri = uri if uri.startswith('http') else base_path + uri
+                                    if target_query and '?' not in abs_uri:
+                                        abs_uri += "?" + target_query
                                     next_endpoint = "/proxy-m3u8" if ".m3u8" in abs_uri else "/proxy-video"
                                     new_uri = f"{proto}://{request_host}{next_endpoint}?url={quote(abs_uri)}&sig={sig}&exp={exp}&request_host={request_host}"
                                     line = line.replace(f'URI="{uri}"', f'URI="{new_uri}"')
                             rewritten.append(line)
                         else:
-                            abs_uri = line if line.startswith('http') else base_url + line
+                            abs_uri = line if line.startswith('http') else base_path + line
+                            if target_query and '?' not in abs_uri:
+                                abs_uri += "?" + target_query
                             next_endpoint = "/proxy-m3u8" if ".m3u8" in abs_uri else "/proxy-video"
                             new_uri = f"{proto}://{request_host}{next_endpoint}?url={quote(abs_uri)}&sig={sig}&exp={exp}&request_host={request_host}"
                             rewritten.append(new_uri)
-                            
+
                     return Response(content="\n".join(rewritten), media_type="application/vnd.apple.mpegurl", headers={
                         "Access-Control-Allow-Origin": "*",
                         "Cache-Control": "no-cache, no-store"
@@ -880,7 +882,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
         except Exception:
             await asyncio.sleep(0.5)
     return Response(status_code=502, content="Backend Proxy Error")
-
+    
 @app.get("/proxy-video")
 async def proxy_video(request: Request, url: str, sig: str = "", exp: str = "", request_host: str = ""):
     target = url.strip()
