@@ -183,10 +183,10 @@ def search_redtube_with_ytdlp(q: str, page: int) -> list:
                 if not vkey and url:
                     parts = [p for p in url.split('/') if p]
                     vkey = parts[-1] if parts else ""
-                if not vkey:
+                if not vkey or not vkey.isdigit():
                     continue
                 title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
-                if any(bad in url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']):
+                if any(bad in url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/', '/channels/', '/pornstar/', '/amateur/']):
                     continue
                 thumb = entry.get('thumbnail', '')
                 videos.append({
@@ -472,8 +472,9 @@ def search_provider_robust(provider: str, q: str, page: int):
                         full_url, title, thumb = "", "", ""
                         if item.name == 'a':
                             href = item.get('href', '')
-                            if not href or 'search=' in href or '/hot' in href or '/join' in href or '/channels/' in href: continue
-                            if not any(char.isdigit() for char in href): continue
+                            if not href or 'search=' in href or '/hot' in href or '/join' in href or '/channels/' in href or '/pornstar/' in href or '/amateur/' in href: continue
+                            parts = [p for p in href.split('/') if p]
+                            if not parts or not parts[-1].isdigit(): continue
                             full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
                             title = item.get('title') or item.get('alt') or item.get_text(strip=True)
                             img_tag = item.select_one('img')
@@ -485,8 +486,9 @@ def search_provider_robust(provider: str, q: str, page: int):
                             a_tag = item.select_one('a[href]')
                             if not a_tag: continue
                             href = a_tag.get('href', '')
-                            if not href or 'search=' in href or '/hot' in href or '/join' in href or '/channels/' in href: continue
-                            if not any(char.isdigit() for char in href): continue
+                            if not href or 'search=' in href or '/hot' in href or '/join' in href or '/channels/' in href or '/pornstar/' in href or '/amateur/' in href: continue
+                            parts = [p for p in href.split('/') if p]
+                            if not parts or not parts[-1].isdigit(): continue
                             full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
                             
                             title_tag = item.select_one('.video-title-text, a[title], span.title, a, p, h3, h4')
@@ -508,6 +510,8 @@ def search_provider_robust(provider: str, q: str, page: int):
                         vid_parts = [p for p in full_url.split('/') if p]
                         vid_id = vid_parts[-1] if vid_parts else "unknown"
 
+                        if not vid_id.isdigit(): continue
+
                         if not title or title.isdigit() or len(title) <= 2:
                             title = vid_id.replace('-', ' ').title()
 
@@ -516,7 +520,6 @@ def search_provider_robust(provider: str, q: str, page: int):
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "redtube"})
                         if len(videos) >= 48: break
 
-                    # Parallel resolver for RedTube missing titles or thumbnails
                     def resolve_redtube(v):
                         try:
                             meta = parse_metadata_fallback(v["url"], "redtube")
@@ -527,7 +530,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         except Exception:
                             pass
 
-                    missing_rdt = [v for v in videos if not v.get("thumbnail") or not v.get("title") or v["title"].isdigit()]
+                    missing_rdt = [v for v in videos if not v.get("thumbnail") or not v.get("title") or v["title"].isdigit() or len(v["title"]) <= 2]
                     if missing_rdt:
                         with ThreadPoolExecutor(max_workers=min(len(missing_rdt), 30)) as pool:
                             list(pool.map(resolve_redtube, missing_rdt))
@@ -856,7 +859,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
     return Response(status_code=502, content="Backend Proxy Error")
 
 @app.get("/proxy-video")
-async def proxy_video(request: Request, url: str):
+async def proxy_video(request: Request, url: str, sig: str = "", exp: str = "", request_host: str = ""):
     target = url.strip()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
