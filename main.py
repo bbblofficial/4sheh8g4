@@ -63,6 +63,115 @@ def search_pornhub_with_ytdlp(q: str, page: int) -> list:
         logger.error(f"yt-dlp fallback search error for Pornhub: {e}")
     return videos
 
+def search_youporn_with_ytdlp(q: str, page: int) -> list:
+    videos = []
+    search_term = f"ypsearch48:{q}"
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': 'in_playlist',
+        'skip_download': True,
+        'nocheckcertificate': True,
+        'age_limit': 21,
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(search_term, download=False)
+            entries = info.get('entries', []) if info else []
+            for entry in entries:
+                if not entry:
+                    continue
+                vkey = entry.get('id') or ''
+                url = entry.get('url') or f"https://www.youporn.com/watch/{vkey}"
+                videos.append({
+                    "vkey": vkey,
+                    "title": html_parser.unescape(entry.get('title', 'Unknown Video')),
+                    "thumbnail": entry.get('thumbnail', ''),
+                    "url": url,
+                    "provider": "youporn"
+                })
+    except Exception as e:
+        logger.error(f"yt-dlp fallback search error for YouPorn: {e}")
+    return videos
+
+def search_xhamster_with_ytdlp(q: str, page: int) -> list:
+    videos = []
+    search_url = f"https://xhamster.com/search/{quote(q)}" if page <= 1 else f"https://xhamster.com/search/{quote(q)}/{page}"
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': 'in_playlist',
+        'skip_download': True,
+        'nocheckcertificate': True,
+        'age_limit': 21,
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(search_url, download=False)
+            entries = info.get('entries', []) if info else []
+            for entry in entries:
+                if not entry:
+                    continue
+                url = entry.get('url', '')
+                vkey = entry.get('id', '')
+                if not vkey and url:
+                    parts = [p for p in url.split('/') if p]
+                    vkey = parts[-1] if parts else ""
+                if not vkey:
+                    continue
+                title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
+                thumb = entry.get('thumbnail', '')
+                if not thumb and entry.get('thumbnails'):
+                    thumb = entry.get('thumbnails')[0].get('url', '')
+                videos.append({
+                    "vkey": vkey,
+                    "title": title,
+                    "thumbnail": thumb,
+                    "url": url if url.startswith('http') else f"https://xhamster.com/videos/{vkey}",
+                    "provider": "xhamster"
+                })
+    except Exception as e:
+        logger.error(f"yt-dlp fallback search error for xHamster: {e}")
+    return videos
+
+def search_redtube_with_ytdlp(q: str, page: int) -> list:
+    videos = []
+    search_url = f"https://www.redtube.com/?search={quote(q)}" if page <= 1 else f"https://www.redtube.com/?search={quote(q)}&page={page}"
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': 'in_playlist',
+        'skip_download': True,
+        'nocheckcertificate': True,
+        'age_limit': 21,
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(search_url, download=False)
+            entries = info.get('entries', []) if info else []
+            for entry in entries:
+                if not entry:
+                    continue
+                url = entry.get('url', '')
+                vkey = entry.get('id', '')
+                if not vkey and url:
+                    parts = [p for p in url.split('/') if p]
+                    vkey = parts[-1] if parts else ""
+                if not vkey:
+                    continue
+                title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
+                thumb = entry.get('thumbnail', '')
+                videos.append({
+                    "vkey": vkey,
+                    "title": title,
+                    "thumbnail": thumb,
+                    "url": url if url.startswith('http') else f"https://www.redtube.com/{vkey}",
+                    "provider": "redtube"
+                })
+    except Exception as e:
+        logger.error(f"yt-dlp fallback search error for RedTube: {e}")
+    return videos
+
 def search_provider_robust(provider: str, q: str, page: int):
     cache_key = f"{provider}:{q}:{page}"
     if cache_key in search_cache:
@@ -99,7 +208,7 @@ def search_provider_robust(provider: str, q: str, page: int):
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
         headers['Referer'] = 'https://www.pornhub.com/'
 
-    for attempt in range(5):
+    for attempt in range(3):
         try:
             resp = requests.get(search_url, headers=headers, timeout=10)
             if resp.status_code == 200:
@@ -223,15 +332,6 @@ def search_provider_robust(provider: str, q: str, page: int):
                                 if thumb: break
 
                         if not thumb:
-                            source_tag = item.select_one('source')
-                            if source_tag:
-                                srcset = source_tag.get('srcset', '') or source_tag.get('data-srcset', '')
-                                if srcset:
-                                    match_srcset = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', srcset)
-                                    if match_srcset:
-                                        thumb = match_srcset.group(0)
-
-                        if not thumb:
                             match_img = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', str(item))
                             if match_img:
                                 candidate = match_img.group(0)
@@ -337,29 +437,15 @@ def search_provider_robust(provider: str, q: str, page: int):
             logger.error(f"Search provider {provider} attempt {attempt+1} error: {e}")
             time.sleep(1.0)
 
+    # Fallback to yt-dlp search if BeautifulSoup scraping fails or returns empty
     if provider == "pornhub":
-        res = search_pornhub_with_ytdlp(q, page)
-        search_cache[cache_key] = res
-        return res
+        videos = search_pornhub_with_ytdlp(q, page)
     elif provider == "youporn":
-        try:
-            ydl_opts = {'quiet': True, 'extract_flat': 'in_playlist', 'nocheckcertificate': True, 'http_headers': headers}
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(search_url, download=False)
-                if info:
-                    for entry in info.get('entries', []):
-                        if not entry: continue
-                        url = entry.get('url', '')
-                        vkey = entry.get('id', '')
-                        if not vkey and '/watch/' in url:
-                            parts = [p for p in url.split('/') if p]
-                            vkey = parts[1] if len(parts) > 1 and parts[0] == 'watch' else (parts[-1] if parts else "")
-                        if not vkey: continue
-                        title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
-                        thumb = entry.get('thumbnail', '')
-                        videos.append({"vkey": vkey, "title": title, "thumbnail": thumb, "url": url, "provider": provider})
-        except Exception as e:
-            logger.error(f"yt-dlp flat fallback search error for YouPorn: {e}")
+        videos = search_youporn_with_ytdlp(q, page)
+    elif provider == "xhamster":
+        videos = search_xhamster_with_ytdlp(q, page)
+    elif provider == "redtube":
+        videos = search_redtube_with_ytdlp(q, page)
 
     search_cache[cache_key] = videos
     return videos
@@ -383,7 +469,7 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
         'Accept-Language': 'en-US,en;q=0.9',
         'Cookie': 'has_accepted_cookie=1; age_verified=1;'
     }
-    for attempt in range(5):
+    for attempt in range(3):
         try:
             resp = requests.get(url, headers=headers, timeout=8)
             if resp.status_code == 200:
@@ -426,9 +512,7 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                     upload_date = date_match.group(0)
 
                 return {"view_count": view_count, "upload_date": upload_date, "thumbnail": poster_url, "title": scraped_title}
-        except Exception as e:
-            if attempt == 4:
-                logger.error(f"Metadata fallback scrape error after 5 attempts: {e}")
+        except Exception:
             time.sleep(1.0)
     return {"view_count": 0, "upload_date": "", "thumbnail": "", "title": ""}
 
@@ -471,7 +555,7 @@ def extract_with_ytdlp(url: str) -> dict:
         }
     }
 
-    max_retries = 5
+    max_retries = 3
     last_error = "Unknown Error"
 
     for attempt in range(max_retries):
@@ -566,7 +650,7 @@ def extract_with_ytdlp(url: str) -> dict:
             if not qualities:
                 last_error = "No valid streams found"
                 if attempt < max_retries - 1:
-                    time.sleep(1.5)
+                    time.sleep(1.0)
                     continue
                 return {"status": "error", "error": last_error, "url": url}
 
@@ -589,7 +673,7 @@ def extract_with_ytdlp(url: str) -> dict:
         except Exception as e:
             last_error = str(e)
             if attempt < max_retries - 1:
-                time.sleep(1.5)
+                time.sleep(1.0)
                 continue
 
     return {"status": "error", "error": f"Failed after {max_retries} retries: {last_error}", "url": url}
@@ -622,7 +706,7 @@ async def fallback_proxy_image(url: str):
         'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
     }
     
-    for attempt in range(5):
+    for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 req = await client.get(target, headers=headers)
@@ -637,9 +721,7 @@ async def fallback_proxy_image(url: str):
                         }
                     )
         except Exception:
-            if attempt == 4:
-                break
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.5)
     return Response(status_code=404)
 
 @app.get("/proxy-m3u8")
@@ -651,7 +733,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
         "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
     }
     
-    for attempt in range(5):
+    for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 resp = await client.get(target, headers=headers)
@@ -687,9 +769,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                         "Cache-Control": "no-cache, no-store"
                     })
         except Exception:
-            if attempt == 4:
-                break
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.5)
     return Response(status_code=502, content="Backend Proxy Error")
 
 @app.get("/proxy-video")
@@ -703,7 +783,7 @@ async def proxy_video(request: Request, url: str):
     if "range" in request.headers:
         headers["Range"] = request.headers["range"]
         
-    for attempt in range(5):
+    for attempt in range(3):
         try:
             client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
             req = client.build_request("GET", target, headers=headers)
@@ -726,9 +806,7 @@ async def proxy_video(request: Request, url: str):
 
                 return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp_headers)
         except Exception:
-            if attempt == 4:
-                break
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.5)
     return Response(status_code=502)
 
 @app.get("/")
