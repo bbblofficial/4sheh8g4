@@ -349,36 +349,28 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if any(bad in title.lower() for bad in ['sponsor', 'promo', 'ad/']): continue
                         seen.add(full_url)
 
-                        # Bulletproof xHamster thumbnail extractor
+                        # Ultra-robust xHamster thumbnail extractor
                         thumb = ""
-                        search_container = item if item.name != 'a' else a_tag.parent
-                        if search_container:
-                            for img in search_container.select('img'):
+                        container = item if item.name != 'a' else (item.parent.parent if item.parent else item)
+                        
+                        container_html = str(container)
+                        matches = re.findall(r'https?://[^\s<>"\']+(?:xhcdn|phncdn)\.com[^\s<>"\']+', container_html)
+                        for candidate in matches:
+                            if any(ext in candidate.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']) and \
+                               not any(bad in candidate.lower() for bad in ['logo', 'svg', 'avatar', 'pixel', 'icon']):
+                                thumb = candidate.split('"')[0].split("'")[0].split(' ')[0]
+                                break
+
+                        if not thumb:
+                            for img in container.select('img, source'):
                                 for attr in ['data-srcset', 'srcset', 'data-src', 'data-lazy-src', 'data-original', 'data-thumb', 'data-image', 'src']:
                                     val = img.get(attr, '')
-                                    if val and 'svg' not in val and 'logo' not in val:
+                                    if val and ('xhcdn' in val or 'phncdn' in val):
                                         cleaned = clean_thumbnail_url(val)
                                         if cleaned.startswith('http'):
                                             thumb = cleaned
                                             break
                                 if thumb: break
-
-                            if not thumb:
-                                for source in search_container.select('source'):
-                                    val = source.get('srcset') or source.get('data-srcset') or ''
-                                    if val:
-                                        cleaned = clean_thumbnail_url(val)
-                                        if cleaned.startswith('http'):
-                                            thumb = cleaned
-                                            break
-
-                        if not thumb:
-                            item_html = str(item)
-                            match_img = re.search(r'https?://[^\s<>"\']+\.(?:xhcdn|phncdn)\.com[^\s<>"\']+(?:\.jpg|\.jpeg|\.png|\.webp)', item_html)
-                            if match_img:
-                                candidate = match_img.group(0)
-                                if 'logo' not in candidate and 'svg' not in candidate and 'avatar' not in candidate:
-                                    thumb = candidate
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                         if len(videos) >= 48: break
