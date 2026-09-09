@@ -725,8 +725,8 @@ async def proxy_video(request: Request, url: str):
 
             async def stream_generator():
                 try:
-                    async async_chunk in resp.aiter_bytes(chunk_size=65536):
-                        yield async_chunk
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
+                        yield chunk
                 except Exception:
                     pass
                 finally:
