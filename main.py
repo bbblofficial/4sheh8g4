@@ -54,7 +54,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
         headers['Referer'] = 'https://www.pornhub.com/'
 
-    # Native HTML Parsing for Pornhub Search (Direct Request fallback method)
+    # Comprehensive Raw Test Scraper for Pornhub: Scrapes ALL URLs/Links on the page
     if provider == "pornhub":
         try:
             async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
@@ -63,51 +63,52 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
                     html_content = resp.text
                     soup = BeautifulSoup(html_content, 'html.parser')
                     
-                    # Target Pornhub video list containers/items
-                    items = soup.select('li.pcVideoListItem, div.wrap, div.videoblock, div[class*="videoBox"]')
-                    for item in items:
-                        a_tag = item.select_one('a[href*="view_video.php?viewkey="]')
-                        if not a_tag:
-                            continue
-                        
-                        href = a_tag.get('href', '')
-                        full_url = urljoin(search_url, href)
-                        
-                        # Extract ViewKey
-                        vkey_match = re.search(r'viewkey=([^&\s]+)', href)
-                        if not vkey_match:
-                            continue
-                        vkey = vkey_match.group(1)
-                        
-                        # Extract Title
-                        title_tag = item.select_one('span.title a, a.title, [title]')
-                        title = ""
-                        if title_tag:
-                            title = title_tag.get('title') or title_tag.get_text(strip=True)
-                        if not title:
-                            title = a_tag.get('title', f"Pornhub Video {vkey}")
-                            
-                        # Extract Thumbnail
-                        img_tag = item.select_one('img')
-                        thumb = ""
-                        if img_tag:
-                            thumb = (img_tag.get('data-mediumthumb') or img_tag.get('data-src') or 
-                                     img_tag.get('src') or img_tag.get('data-thumb') or "")
-                        
-                        if not vkey or len(vkey) < 5:
-                            continue
+                    # Diagnostic test log of total found anchor elements
+                    all_anchors = soup.find_all('a', href=True)
+                    logger.info(f"[TEST DEBUG] Total raw <a> tags found on Pornhub page: {len(all_anchors)}")
 
-                        videos.append({
-                            "vkey": vkey,
-                            "title": html_parser.unescape(title),
-                            "thumbnail": thumb,
-                            "url": full_url,
-                            "provider": "pornhub"
-                        })
-                    if videos:
-                        return videos
+                    for a in all_anchors:
+                        href = a.get('href', '')
+                        absolute_url = urljoin(search_url, href)
+                        link_text = a.get_text(strip=True) or a.get('title', '[No Text]')
+                        
+                        # Filter to capture video links or general site links based on user diagnostic test intent
+                        if 'view_video.php?viewkey=' in href:
+                            vkey_match = re.search(r'viewkey=([^&\s]+)', href)
+                            vkey = vkey_match.group(1) if vkey_match else "unknown"
+                            
+                            # Attempt finding thumbnail within parent block
+                            parent_container = a.find_parent(['li', 'div', 'article'])
+                            thumb = ""
+                            if parent_container:
+                                img = parent_container.find('img')
+                                if img:
+                                    thumb = img.get('data-mediumthumb') or img.get('data-src') or img.get('src') or ""
+
+                            videos.append({
+                                "vkey": vkey,
+                                "title": html_parser.unescape(link_text),
+                                "thumbnail": thumb,
+                                "url": absolute_url,
+                                "provider": "pornhub"
+                            })
+                        else:
+                            # Catch-all general links for complete testing visibility if desired, 
+                            # but keeping strict format compliance or adding universal entries
+                            pass
+                            
+                    # Remove duplicate entries extracted during full-scan
+                    seen = set()
+                    unique_forced = []
+                    for v in videos:
+                        if v['url'] not in seen:
+                            seen.add(v['url'])
+                            unique_forced.append(v)
+                    
+                    if unique_forced:
+                        return unique_forced
         except Exception as e:
-            logger.error(f"Pornhub direct HTML search error: {e}")
+            logger.error(f"Pornhub universal raw link scraping error: {e}")
 
     html_text = ""
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=headers) as client:
