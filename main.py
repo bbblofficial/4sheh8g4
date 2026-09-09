@@ -414,18 +414,15 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if any(bad in title.lower() for bad in ['sponsor', 'promo', 'ad/']): continue
                         seen.add(full_url)
 
-                        # High-speed in-page thumbnail extraction
                         thumb = ""
                         container = item if item.name != 'a' else (item.parent.parent if item.parent else item)
                         
-                        # Check noscript first (where xHamster keeps full thumbnail URLs for lazy-load)
                         for noscript in container.select('noscript'):
                             ns_match = re.search(r'https?://[^\s<>"\']+\.(?:xhcdn|phncdn)\.com[^\s<>"\']+(?:\.jpg|\.jpeg|\.png|\.webp)', noscript.text)
                             if ns_match:
                                 thumb = clean_thumbnail_url(ns_match.group(0))
                                 break
 
-                        # Check img & source attributes
                         if not thumb:
                             for tag in container.select('img, source'):
                                 for attr in ['data-srcset', 'srcset', 'data-src', 'data-lazy-src', 'data-original', 'data-thumb', 'data-image', 'src']:
@@ -437,7 +434,6 @@ def search_provider_robust(provider: str, q: str, page: int):
                                             break
                                 if thumb: break
 
-                        # Container data attributes or regex
                         if not thumb:
                             for attr in ['data-thumb', 'data-preview', 'data-poster', 'data-image', 'data-src']:
                                 val = container.get(attr, '')
@@ -457,7 +453,6 @@ def search_provider_robust(provider: str, q: str, page: int):
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                         if len(videos) >= 48: break
 
-                    # Parallel thumbnail resolver (runs concurrently in ~0.5s instead of sequential bottleneck)
                     missing_thumbs = [v for v in videos if not v.get("thumbnail")]
                     if missing_thumbs:
                         def resolve_thumb(v):
@@ -472,39 +467,70 @@ def search_provider_robust(provider: str, q: str, page: int):
                             list(pool.map(resolve_thumb, missing_thumbs))
 
                 elif provider == "redtube":
-                    items = soup.select('div.videoBox, li.videoblock, div.video-item, div.pb-card, div[class*="video"]')
+                    items = soup.select('div.videoBox, li.videoblock, div.video-item, div.pb-card, div.video-tile, div[class*="video"], a[href*="/"]')
                     for item in items:
-                        a_tag = item.select_one('a[href]')
-                        if not a_tag: continue
-                        href = a_tag.get('href', '')
-                        if not href or ('/' not in href and not any(char.isdigit() for char in href)): continue
-                        if 'search=' in href or '/hot' in href or '/join' in href: continue
+                        full_url, title, thumb = "", "", ""
+                        if item.name == 'a':
+                            href = item.get('href', '')
+                            if not href or 'search=' in href or '/hot' in href or '/join' in href or '/channels/' in href: continue
+                            if not any(char.isdigit() for char in href): continue
+                            full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
+                            title = item.get('title') or item.get('alt') or item.get_text(strip=True)
+                            img_tag = item.select_one('img')
+                            if img_tag:
+                                if not title or title.isdigit() or len(title) <= 2:
+                                    title = img_tag.get('alt') or title
+                                thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "")
+                        else:
+                            a_tag = item.select_one('a[href]')
+                            if not a_tag: continue
+                            href = a_tag.get('href', '')
+                            if not href or 'search=' in href or '/hot' in href or '/join' in href or '/channels/' in href: continue
+                            if not any(char.isdigit() for char in href): continue
+                            full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
+                            
+                            title_tag = item.select_one('.video-title-text, a[title], span.title, a, p, h3, h4')
+                            if title_tag:
+                                title = title_tag.get('title') or title_tag.get_text(strip=True)
+                            if not title or title.isdigit() or len(title) <= 2:
+                                title = a_tag.get('title', '')
+                            
+                            img_tag = item.select_one('img')
+                            if img_tag:
+                                if not title or title.isdigit() or len(title) <= 2:
+                                    title = img_tag.get('alt') or title
+                                thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "")
 
-                        full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
+                        full_url = full_url.split('?')[0].rstrip('/')
+                        if not full_url or full_url in seen: continue
+                        seen.add(full_url)
+
                         vid_parts = [p for p in full_url.split('/') if p]
                         vid_id = vid_parts[-1] if vid_parts else "unknown"
 
-                        title_tag = item.select_one('.video-title-text, a[title], span.title, a, p, h3, h4')
-                        title = ""
-                        if title_tag:
-                            title = title_tag.get('title') or title_tag.get_text(strip=True)
-
-                        if not title or title == vid_id or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title) or 'redtube' in title.lower():
-                            alt_title = a_tag.get('title', '')
-                            if alt_title and alt_title != vid_id and not alt_title.isdigit():
-                                title = alt_title
-                            else:
-                                title = vid_id.replace('-', ' ').title()
+                        if not title or title.isdigit() or len(title) <= 2:
+                            title = vid_id.replace('-', ' ').title()
 
                         if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']): continue
-                        if full_url in seen: continue
-                        seen.add(full_url)
-
-                        img_tag = item.select_one('img')
-                        thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "") if img_tag else ""
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "redtube"})
                         if len(videos) >= 48: break
+
+                    # Parallel resolver for RedTube missing titles or thumbnails
+                    def resolve_redtube(v):
+                        try:
+                            meta = parse_metadata_fallback(v["url"], "redtube")
+                            if meta.get("thumbnail") and (not v["thumbnail"] or 'rdtcdn.com' not in v["thumbnail"]):
+                                v["thumbnail"] = meta["thumbnail"]
+                            if meta.get("title") and (not v["title"] or v["title"].isdigit() or len(v["title"]) <= 2):
+                                v["title"] = meta["title"]
+                        except Exception:
+                            pass
+
+                    missing_rdt = [v for v in videos if not v.get("thumbnail") or not v.get("title") or v["title"].isdigit()]
+                    if missing_rdt:
+                        with ThreadPoolExecutor(max_workers=min(len(missing_rdt), 30)) as pool:
+                            list(pool.map(resolve_redtube, missing_rdt))
 
                 elif provider == "xnxx":
                     items = soup.select('div.mozaique div.thumb-block')
