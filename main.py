@@ -304,7 +304,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if len(videos) >= 48: break
 
                 elif provider == "xhamster":
-                    items = soup.select('div.thumb-list__item, article.video-thumb, div.video-container, div[class*="video-thumb"], div.video-box')
+                    items = soup.select('div.thumb-list__item, article.video-thumb, div.video-container, div[class*="video-thumb"], div.video-box, div[class*="video-card"]')
                     if not items:
                         items = soup.select('a[href*="/videos/"]')
                     for item in items:
@@ -331,48 +331,48 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if any(bad in title.lower() for bad in ['sponsor', 'promo', 'ad/']): continue
                         seen.add(full_url)
 
-                        # Robust xHamster thumbnail extractor
+                        # Ultra-robust xHamster thumbnail extractor
                         thumb = ""
-                        img_tags = item.select('img') if item.name != 'a' else [item.select_one('img')]
-                        for img in img_tags:
-                            if not img: continue
-                            for attr in ['data-src', 'src', 'data-lazy-src', 'data-original', 'data-thumb', 'data-image']:
-                                val = img.get(attr, '')
-                                if val and val.startswith('http') and 'svg' not in val and 'logo' not in val:
-                                    thumb = val
-                                    break
-                            if not thumb:
-                                srcset = img.get('srcset') or img.get('data-srcset') or ''
-                                if srcset:
-                                    parts = srcset.split(',')
-                                    if parts:
-                                        candidate = parts[0].strip().split(' ')[0]
-                                        if candidate.startswith('http'):
-                                            thumb = candidate
-                            if thumb: break
+                        search_container = item if item.name != 'a' else a_tag.parent
+                        if search_container:
+                            # 1. Check img tags with priority for data-src, data-lazy, etc. (avoiding svg/placeholder src)
+                            for img in search_container.select('img'):
+                                for attr in ['data-src', 'data-lazy-src', 'data-original', 'data-thumb', 'data-image', 'srcset', 'data-srcset']:
+                                    val = img.get(attr, '')
+                                    if val:
+                                        if ',' in val:  # srcset format
+                                            val = val.split(',')[0].strip().split(' ')[0]
+                                        if val.startswith('http') and 'svg' not in val and 'logo' not in val:
+                                            thumb = val
+                                            break
+                                if not thumb:
+                                    src = img.get('src', '')
+                                    if src.startswith('http') and 'data:image' not in src and 'svg' not in src and 'logo' not in src:
+                                        thumb = src
+                                        break
+                                if thumb: break
 
-                        if not thumb:
-                            source_tags = item.select('source')
-                            for src_tag in source_tags:
-                                srcset = src_tag.get('srcset') or src_tag.get('data-srcset') or ''
-                                if srcset:
-                                    parts = srcset.split(',')
-                                    if parts:
-                                        candidate = parts[0].strip().split(' ')[0]
+                            # 2. Check source tags inside picture
+                            if not thumb:
+                                for source in search_container.select('source'):
+                                    srcset = source.get('srcset') or source.get('data-srcset') or ''
+                                    if srcset:
+                                        candidate = srcset.split(',')[0].strip().split(' ')[0]
                                         if candidate.startswith('http'):
                                             thumb = candidate
                                             break
 
-                        if not thumb:
-                            for attr in ['data-image', 'data-poster', 'data-background', 'data-thumb', 'data-preview']:
-                                val = item.get(attr, '')
-                                if val and val.startswith('http') and 'svg' not in val:
-                                    thumb = val
-                                    break
+                            # 3. Check data attributes on container
+                            if not thumb:
+                                for attr in ['data-image', 'data-poster', 'data-background', 'data-thumb', 'data-preview', 'data-src']:
+                                    val = search_container.get(attr, '')
+                                    if val and val.startswith('http') and 'svg' not in val:
+                                        thumb = val
+                                        break
 
+                        # 4. Regex fallback on the card HTML for any xhcdn.com image URL
                         if not thumb:
-                            item_html = str(item)
-                            match_img = re.search(r'https?://[^\s<>"\']+\.(?:jpg|jpeg|png|webp)', item_html)
+                            match_img = re.search(r'https?://[^\s<>"\']+\.(?:xhcdn|phncdn)\.com[^\s<>"\']+\.(?:jpg|jpeg|png|webp)', str(item))
                             if match_img:
                                 candidate = match_img.group(0)
                                 if 'logo' not in candidate and 'svg' not in candidate and 'avatar' not in candidate:
