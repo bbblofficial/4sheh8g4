@@ -50,7 +50,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
         search_url = f"https://www.xvideos.com/?k={quote(q)}" if p_val == 0 else f"https://www.xvideos.com/?k={quote(q)}&p={p_val}"
         headers['Referer'] = 'https://www.xvideos.com/'
     else:
-        search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}" if page <= 1 else f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
+        search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
         headers['Referer'] = 'https://www.pornhub.com/'
 
     html_text = ""
@@ -71,14 +71,13 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
     soup = BeautifulSoup(html_text, 'html.parser')
 
     if provider == "pornhub":
-        # Robust link extraction logic matching your pure Python scraper style
         link_pattern = r'<a\s+(?:[^>]*?\s+)?href=(["\'])(.*?)\1'
         matches = re.findall(link_pattern, html_text, re.IGNORECASE)
         links = [match[1] for match in matches]
         
         seen_vkeys = set()
         for href in links:
-            if href and ('view_video.php?viewkey=' in href or '/view_video.php?viewkey=' in href):
+            if href and 'viewkey=' in href:
                 match_vk = re.search(r'viewkey=([^&\s]+)', href)
                 if match_vk:
                     vkey = match_vk.group(1)
@@ -88,7 +87,6 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
                     
                     absolute_url = urljoin("https://www.pornhub.com", href).split('?')[0] + f"?viewkey={vkey}"
                     
-                    # Extract title link context
                     escaped_href = re.escape(href)
                     text_pattern = r'<a\s+[^>]*href=(["\'])' + escaped_href + r'\1[^>]*>(.*?)</a>'
                     text_match = re.search(text_pattern, html_text, re.IGNORECASE | re.DOTALL)
@@ -337,58 +335,6 @@ async def search_provider_robust(provider: str, q: str, page: int):
         if u:
             seen_urls.add(u)
         unique_videos.append(v)
-
-    if not unique_videos:
-        try:
-            if provider == "youporn":
-                search_url = f"https://www.youporn.com/search/?query={quote(q)}&page={page}"
-            elif provider == "xhamster":
-                search_url = f"https://xhamster.com/search/{quote(q)}"
-            elif provider == "redtube":
-                search_url = f"https://www.redtube.com/?search={quote(q)}"
-            elif provider == "xnxx":
-                search_url = f"https://www.xnxx.com/search/{quote(q)}"
-            elif provider == "xvideos":
-                search_url = f"https://www.xvideos.com/?k={quote(q)}"
-            else:
-                search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
-
-            ydl_opts = {'quiet': True, 'extract_flat': True, 'nocheckcertificate': True, 'http_headers': headers}
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(search_url, download=False)
-                if info:
-                    for entry in info.get('entries', []):
-                        if not entry: continue
-                        url = entry.get('url', '')
-                        vkey = entry.get('id', '')
-                        if not vkey and '/watch/' in url:
-                            parts = [p for p in url.split('/') if p]
-                            vkey = parts[1] if len(parts) > 1 and parts[0] == 'watch' else (parts[-1] if parts else "")
-                        elif not vkey and 'viewkey=' in url:
-                            vkey = url.split('viewkey=')[1].split('&')[0]
-                        elif not vkey and any(d in url for d in ['videos/', 'video-']):
-                            parts = [p for p in url.split('/') if p]
-                            vkey = parts[-1] if parts else ""
-                        if not vkey: continue
-
-                        title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
-                        thumb = entry.get('thumbnail', '')
-                        if not thumb and entry.get('thumbnails'):
-                            thumb = entry.get('thumbnails')[0].get('url', '')
-
-                        vk = str(vkey).strip()
-                        u = (url if url.startswith('http') else search_url).split('?')[0].rstrip('/')
-                        if vk in seen_vkeys or u in seen_urls:
-                            continue
-                        if vk: seen_vkeys.add(vk)
-                        if u: seen_urls.add(u)
-
-                        unique_videos.append({
-                            "vkey": vkey, "title": title, "thumbnail": thumb,
-                            "url": url if url.startswith('http') else search_url, "provider": provider
-                        })
-        except Exception as e:
-            logger.error(f"yt-dlp flat fallback search error for {provider}: {e}")
 
     search_cache[cache_key] = unique_videos
     return unique_videos
