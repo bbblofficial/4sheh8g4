@@ -331,21 +331,51 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if any(bad in title.lower() for bad in ['sponsor', 'promo', 'ad/']): continue
                         seen.add(full_url)
 
+                        # Robust xHamster thumbnail extractor
                         thumb = ""
-                        img_tag = item.select_one('img') if item.name != 'a' else None
-                        if img_tag:
-                            thumb = img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or ''
-                        if not thumb and item.name != 'a':
-                            for attr in ['data-image', 'data-poster', 'data-background', 'data-thumb']:
+                        img_tags = item.select('img') if item.name != 'a' else [item.select_one('img')]
+                        for img in img_tags:
+                            if not img: continue
+                            for attr in ['data-src', 'src', 'data-lazy-src', 'data-original', 'data-thumb', 'data-image']:
+                                val = img.get(attr, '')
+                                if val and val.startswith('http') and 'svg' not in val and 'logo' not in val:
+                                    thumb = val
+                                    break
+                            if not thumb:
+                                srcset = img.get('srcset') or img.get('data-srcset') or ''
+                                if srcset:
+                                    parts = srcset.split(',')
+                                    if parts:
+                                        candidate = parts[0].strip().split(' ')[0]
+                                        if candidate.startswith('http'):
+                                            thumb = candidate
+                            if thumb: break
+
+                        if not thumb:
+                            source_tags = item.select('source')
+                            for src_tag in source_tags:
+                                srcset = src_tag.get('srcset') or src_tag.get('data-srcset') or ''
+                                if srcset:
+                                    parts = srcset.split(',')
+                                    if parts:
+                                        candidate = parts[0].strip().split(' ')[0]
+                                        if candidate.startswith('http'):
+                                            thumb = candidate
+                                            break
+
+                        if not thumb:
+                            for attr in ['data-image', 'data-poster', 'data-background', 'data-thumb', 'data-preview']:
                                 val = item.get(attr, '')
                                 if val and val.startswith('http') and 'svg' not in val:
                                     thumb = val
                                     break
+
                         if not thumb:
-                            match_img = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', str(item))
+                            item_html = str(item)
+                            match_img = re.search(r'https?://[^\s<>"\']+\.(?:jpg|jpeg|png|webp)', item_html)
                             if match_img:
                                 candidate = match_img.group(0)
-                                if 'logo' not in candidate and 'svg' not in candidate:
+                                if 'logo' not in candidate and 'svg' not in candidate and 'avatar' not in candidate:
                                     thumb = candidate
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
