@@ -230,6 +230,10 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
         base_domain = "https://www.redtube.com"
     elif "youporn.com" in url:
         base_domain = "https://www.youporn.com"
+    elif "ok.xxx" in url:
+        base_domain = "https://ok.xxx"
+    elif "pornhat.com" in url:
+        base_domain = "https://www.pornhat.com"
 
     url = re.sub(r'https?://[a-zA-Z0-9-]+\.' + provider + r'\.com', base_domain, url)
     headers = {
@@ -253,7 +257,7 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
             if not scraped_title:
                 title_tag = soup.find('title')
                 if title_tag:
-                    scraped_title = title_tag.get_text().replace('&amp;', '&').split('- RedTube')[0].split('- YouPorn')[0].split('- xHamster')[0].strip()
+                    scraped_title = title_tag.get_text().replace('&amp;', '&').split('- RedTube')[0].split('- YouPorn')[0].split('- xHamster')[0].split('- PornHat')[0].split('- OK')[0].strip()
 
             og_img = soup.find('meta', property='og:image')
             if og_img and og_img.get('content'):
@@ -315,6 +319,12 @@ def search_provider_robust(provider: str, q: str, page: int):
         p_val = page - 1 if page > 1 else 0
         search_url = f"https://www.xvideos.com/?k={quote(q)}" if p_val == 0 else f"https://www.xvideos.com/?k={quote(q)}&p={p_val}"
         headers['Referer'] = 'https://www.xvideos.com/'
+    elif provider in ["okxxx", "ok"]:
+        search_url = f"https://ok.xxx/search/{quote(q)}/" if page <= 1 else f"https://ok.xxx/search/{quote(q)}/{page}/"
+        headers['Referer'] = 'https://ok.xxx/'
+    elif provider == "pornhat":
+        search_url = f"https://www.pornhat.com/sites/{quote(q)}/" if page <= 1 else f"https://www.pornhat.com/sites/{quote(q)}/{page}/"
+        headers['Referer'] = 'https://www.pornhat.com/'
     else:
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
         headers['Referer'] = 'https://www.pornhub.com/'
@@ -322,6 +332,10 @@ def search_provider_robust(provider: str, q: str, page: int):
     for attempt in range(3):
         try:
             resp = requests.get(search_url, headers=headers, timeout=10)
+            if resp.status_code == 404 and provider == "pornhat":
+                search_url = f"https://www.pornhat.com/search/{quote(q)}/" if page <= 1 else f"https://www.pornhat.com/search/{quote(q)}/{page}/"
+                resp = requests.get(search_url, headers=headers, timeout=10)
+
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 seen = set()
@@ -556,6 +570,75 @@ def search_provider_robust(provider: str, q: str, page: int):
                     
                     videos = [v for v in videos if not is_invalid_title(v["title"])]
 
+                elif provider in ["okxxx", "ok", "pornhat"]:
+                    items = soup.select('div.video-box, div.thumb-block, div.item, article, div[class*="video"], div[class*="thumb"], a[href*="/video/"]')
+                    for item in items:
+                        full_url, title, thumb = "", "", ""
+                        if item.name == 'a':
+                            href = item.get('href', '')
+                            if not href or '/video/' not in href: continue
+                            domain = 'ok.xxx' if provider in ['okxxx', 'ok'] else 'www.pornhat.com'
+                            full_url = href if href.startswith('http') else f"https://{domain}{href}"
+                            title = item.get('title') or item.get('alt') or item.get_text(strip=True)
+                            img_tag = item.select_one('img')
+                            if img_tag:
+                                if is_invalid_title(title):
+                                    title = img_tag.get('alt') or title
+                                thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "")
+                        else:
+                            a_tag = item.select_one('a[href*="/video/"]')
+                            if not a_tag: continue
+                            href = a_tag.get('href', '')
+                            domain = 'ok.xxx' if provider in ['okxxx', 'ok'] else 'www.pornhat.com'
+                            full_url = href if href.startswith('http') else f"https://{domain}{href}"
+                            
+                            title_tag = item.select_one('.title, a[title], span.title, a, p, h3, h4')
+                            if title_tag:
+                                title = title_tag.get('title') or title_tag.get_text(strip=True)
+                            if is_invalid_title(title):
+                                title = a_tag.get('title', '')
+                            
+                            img_tag = item.select_one('img')
+                            if img_tag:
+                                if is_invalid_title(title):
+                                    title = img_tag.get('alt') or title
+                                thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "")
+
+                        full_url = full_url.split('?')[0].rstrip('/')
+                        if not full_url or full_url in seen: continue
+                        if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']): continue
+                        if is_invalid_title(title): continue
+                        seen.add(full_url)
+
+                        vid_parts = [p for p in full_url.split('/') if p]
+                        vid_id = vid_parts[-1] if vid_parts else "unknown"
+
+                        videos.append({
+                            "vkey": vid_id,
+                            "title": html_parser.unescape(title),
+                            "thumbnail": thumb,
+                            "url": full_url,
+                            "provider": "okxxx" if provider in ["okxxx", "ok"] else "pornhat"
+                        })
+                        if len(videos) >= 48: break
+
+                    missing_thumbs = [v for v in videos if not v.get("thumbnail") or is_invalid_title(v["title"])]
+                    if missing_thumbs:
+                        def resolve_other(v):
+                            try:
+                                meta = parse_metadata_fallback(v["url"], v["provider"])
+                                if meta.get("thumbnail") and not v["thumbnail"]:
+                                    v["thumbnail"] = meta["thumbnail"]
+                                if meta.get("title") and not is_invalid_title(meta["title"]):
+                                    v["title"] = meta["title"]
+                            except Exception:
+                                pass
+
+                        with ThreadPoolExecutor(max_workers=min(len(missing_thumbs), 30)) as pool:
+                            list(pool.map(resolve_other, missing_thumbs))
+                    
+                    videos = [v for v in videos if not is_invalid_title(v["title"])]
+
                 elif provider == "xnxx":
                     items = soup.select('div.mozaique div.thumb-block')
                     for item in items:
@@ -640,8 +723,12 @@ def extract_with_ytdlp(url: str) -> dict:
         provider = "redtube"
     elif "youporn.com" in url:
         provider = "youporn"
+    elif "ok.xxx" in url:
+        provider = "okxxx"
+    elif "pornhat.com" in url:
+        provider = "pornhat"
 
-    referer_url = f"https://www.{provider}.com/" if provider != "xhamster" else "https://xhamster.com/"
+    referer_url = f"https://www.{provider}.com/" if provider not in ["xhamster", "okxxx"] else ("https://xhamster.com/" if provider == "xhamster" else "https://ok.xxx/")
 
     ydl_opts = {
         'quiet': True,
@@ -797,7 +884,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 async def extract_endpoint(url: str):
     if not url: return JSONResponse({"status": "error", "error": "Missing URL"})
     target_url = url.strip()
-    if "viewkey=" not in target_url and not any(d in target_url for d in ["xhamster.com", "xnxx.com", "xvideos.com", "redtube.com", "youporn.com"]):
+    if "viewkey=" not in target_url and not any(d in target_url for d in ["xhamster.com", "xnxx.com", "xvideos.com", "redtube.com", "youporn.com", "ok.xxx", "pornhat.com"]):
         if len(target_url) in [13, 15, 16] and "." not in target_url:
              target_url = f"https://www.pornhub.com/view_video.php?viewkey={target_url}"
     loop = asyncio.get_running_loop()
