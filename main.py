@@ -182,9 +182,9 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if len(videos) >= 48: break
 
                 elif provider == "xhamster":
-                    items = soup.select('div.video-thumb, div.thumb-list__item, div.video-container, div.cell, article, div.video-thumb-info')
+                    items = soup.select('div.video-thumb, div.thumb-list__item, div.video-container, div.cell, article, div.video-thumb-info, div[class*="video-thumb"]')
                     for item in items:
-                        a_tag = item.select_one('a[href*="/videos/"], a[href*="/movie/"]')
+                        a_tag = item.select_one('a[href*="/videos/"], a[href*="/movie/"], a[href*="/pornstar/"]')
                         if not a_tag: continue
                         href = a_tag.get('href', '')
                         full_url = href if href.startswith('http') else f"https://xhamster.com{href}"
@@ -195,24 +195,24 @@ def search_provider_robust(provider: str, q: str, page: int):
                         vid_parts = [p for p in full_url.split('/') if p]
                         vid_id = vid_parts[-1] if vid_parts else "unknown"
 
-                        title_tag = item.select_one('a.video-thumb__title, a[title], h4, p')
+                        title_tag = item.select_one('a.video-thumb__title, a[title], h4, p, span.title')
                         title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else vid_id.replace('-', ' ').title()
 
                         if "results" in title.lower() or not a_tag.get('href'):
                             continue
 
                         thumb = ""
-                        for attr_name in ['data-image', 'data-poster', 'data-src', 'data-background', 'content']:
+                        for attr_name in ['data-image', 'data-poster', 'data-src', 'data-background', 'content', 'data-thumb']:
                             val = item.get(attr_name, '')
                             if val and val.startswith('http') and 'svg' not in val and 'logo' not in val:
                                 thumb = val
                                 break
 
                         if not thumb:
-                            img_tags = item.select('img')
-                            for img in img_tags:
+                            img_tag = item.select_one('img')
+                            if img_tag:
                                 for attr_name in ['data-src', 'src', 'data-lazy-src', 'data-thumb', 'data-image', 'srcset']:
-                                    src_candidate = img.get(attr_name, '')
+                                    src_candidate = img_tag.get(attr_name, '')
                                     if src_candidate:
                                         match_url = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', src_candidate)
                                         if match_url:
@@ -221,6 +221,15 @@ def search_provider_robust(provider: str, q: str, page: int):
                                                 thumb = candidate
                                                 break
                                 if thumb: break
+
+                        if not thumb:
+                            source_tag = item.select_one('source')
+                            if source_tag:
+                                srcset = source_tag.get('srcset', '') or source_tag.get('data-srcset', '')
+                                if srcset:
+                                    match_srcset = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', srcset)
+                                    if match_srcset:
+                                        thumb = match_srcset.group(0)
 
                         if not thumb:
                             match_img = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', str(item))
@@ -239,7 +248,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if not a_tag: continue
                         href = a_tag.get('href', '')
                         if not href or ('/' not in href and not any(char.isdigit() for char in href)): continue
-                        if 'search=' in href or '/channels/' in href or '/hot' in href: continue
+                        if 'search=' in href or '/hot' in href: continue
 
                         full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
                         if full_url in seen: continue
@@ -267,7 +276,13 @@ def search_provider_robust(provider: str, q: str, page: int):
                         img_tag = item.select_one('img')
                         thumb = ""
                         if img_tag:
-                            thumb = (img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or "")
+                            thumb = (img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "")
+                        if not thumb:
+                            match_img = re.search(r'https?://[^\s<>"]+?\.(?:jpg|jpeg|png|webp)', str(item))
+                            if match_img:
+                                candidate = match_img.group(0)
+                                if 'logo' not in candidate and 'svg' not in candidate:
+                                    thumb = candidate
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "redtube"})
                         if len(videos) >= 48: break
