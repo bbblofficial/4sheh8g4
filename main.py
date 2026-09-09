@@ -149,18 +149,11 @@ def search_xhamster_with_ytdlp(q: str, page: int) -> list:
                 thumb = entry.get('thumbnail', '')
                 if not thumb and entry.get('thumbnails'):
                     thumb = entry.get('thumbnails')[0].get('url', '')
-                
-                final_url = url if url.startswith('http') else f"https://xhamster.com/videos/{vkey}"
-                cleaned_thumb = clean_thumbnail_url(thumb)
-                if not cleaned_thumb:
-                    meta = parse_metadata_fallback(final_url, "xhamster")
-                    cleaned_thumb = meta.get("thumbnail", "")
-
                 videos.append({
                     "vkey": vkey,
                     "title": title,
-                    "thumbnail": cleaned_thumb,
-                    "url": final_url,
+                    "thumbnail": clean_thumbnail_url(thumb),
+                    "url": url if url.startswith('http') else f"https://xhamster.com/videos/{vkey}",
                     "provider": "xhamster"
                 })
     except Exception as e:
@@ -206,6 +199,71 @@ def search_redtube_with_ytdlp(q: str, page: int) -> list:
     except Exception as e:
         logger.error(f"yt-dlp fallback search error for RedTube: {e}")
     return videos
+
+def parse_metadata_fallback(url: str, provider: str) -> dict:
+    base_domain = "https://www.pornhub.com"
+    if "xhamster.com" in url:
+        base_domain = "https://xhamster.com"
+    elif "xnxx.com" in url:
+        base_domain = "https://www.xnxx.com"
+    elif "xvideos.com" in url:
+        base_domain = "https://www.xvideos.com"
+    elif "redtube.com" in url:
+        base_domain = "https://www.redtube.com"
+    elif "youporn.com" in url:
+        base_domain = "https://www.youporn.com"
+
+    url = re.sub(r'https?://[a-zA-Z0-9-]+\.' + provider + r'\.com', base_domain, url)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cookie': 'has_accepted_cookie=1; age_verified=1;'
+    }
+    try:
+        resp = requests.get(url, headers=headers, timeout=3.5)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            view_count = 0
+            upload_date = ""
+            poster_url = ""
+            scraped_title = ""
+
+            og_title = soup.find('meta', property='og:title')
+            if og_title and og_title.get('content'):
+                scraped_title = og_title.get('content').replace('&amp;', '&').strip()
+
+            if not scraped_title:
+                title_tag = soup.find('title')
+                if title_tag:
+                    scraped_title = title_tag.get_text().replace('&amp;', '&').split('- RedTube')[0].split('- YouPorn')[0].split('- xHamster')[0].strip()
+
+            og_img = soup.find('meta', property='og:image')
+            if og_img and og_img.get('content'):
+                poster_url = clean_thumbnail_url(og_img.get('content').replace('&amp;', '&'))
+
+            if not poster_url:
+                img_json = re.search(r'"image_url"\s*:\s*"([^"]+)"', resp.text)
+                if img_json:
+                    poster_url = clean_thumbnail_url(img_json.group(1).replace('\\/', '/'))
+
+            view_match = re.search(r'([\d,\.]+)\s*(?:Views|views|Vistas|M views|k views)', resp.text)
+            if view_match:
+                raw_views = view_match.group(1).replace(',', '').replace('.', '')
+                if 'k' in view_match.group(0).lower():
+                    view_count = int(float(raw_views.replace('k', '')) * 1000)
+                elif 'm' in view_match.group(0).lower():
+                    view_count = int(float(raw_views.replace('m', '')) * 1000000)
+                else:
+                    view_count = int(raw_views) if raw_views.isdigit() else 0
+
+            date_match = re.search(r'(\d{4}-\d{2}-\d{2})|(\d{1,2}\s+[a-zA-Z]+\s+\d{4})', resp.text)
+            if date_match:
+                upload_date = date_match.group(0)
+
+            return {"view_count": view_count, "upload_date": upload_date, "thumbnail": poster_url, "title": scraped_title}
+    except Exception:
+        pass
+    return {"view_count": 0, "upload_date": "", "thumbnail": "", "title": ""}
 
 def search_provider_robust(provider: str, q: str, page: int):
     cache_key = f"{provider}:{q}:{page}"
@@ -270,7 +328,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                             href = a_tag.get('href', '')
                             full_url = href if href.startswith('http') else f"https://www.youporn.com{href}"
                             title_tag = item.select_one('a[href*="/watch/"] [title], p.title, span.title, a, div.title, h3, h4')
-                            title = title_tag.get('title') or title_tag.get('alt') or title_tag.get_text(strip=True) if title_tag else a_tag.get('title', '')
+                            title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else a_tag.get('title', '')
                             img_tag = item.select_one('img')
                             if img_tag:
                                 if not title or title == "Unknown Video" or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title):
@@ -356,22 +414,22 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if any(bad in title.lower() for bad in ['sponsor', 'promo', 'ad/']): continue
                         seen.add(full_url)
 
-                        # Ultra-robust xHamster thumbnail extractor with fallback to parse_metadata_fallback
+                        # High-speed in-page thumbnail extraction
                         thumb = ""
                         container = item if item.name != 'a' else (item.parent.parent if item.parent else item)
                         
-                        container_html = str(container)
-                        matches = re.findall(r'https?://[^\s<>"\']+(?:xhcdn|phncdn)\.com[^\s<>"\']+', container_html)
-                        for candidate in matches:
-                            if any(ext in candidate.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']) and \
-                               not any(bad in candidate.lower() for bad in ['logo', 'svg', 'avatar', 'pixel', 'icon']):
-                                thumb = candidate.split('"')[0].split("'")[0].split(' ')[0]
+                        # Check noscript first (where xHamster keeps full thumbnail URLs for lazy-load)
+                        for noscript in container.select('noscript'):
+                            ns_match = re.search(r'https?://[^\s<>"\']+\.(?:xhcdn|phncdn)\.com[^\s<>"\']+(?:\.jpg|\.jpeg|\.png|\.webp)', noscript.text)
+                            if ns_match:
+                                thumb = clean_thumbnail_url(ns_match.group(0))
                                 break
 
+                        # Check img & source attributes
                         if not thumb:
-                            for img in container.select('img, source'):
+                            for tag in container.select('img, source'):
                                 for attr in ['data-srcset', 'srcset', 'data-src', 'data-lazy-src', 'data-original', 'data-thumb', 'data-image', 'src']:
-                                    val = img.get(attr, '')
+                                    val = tag.get(attr, '')
                                     if val and ('xhcdn' in val or 'phncdn' in val):
                                         cleaned = clean_thumbnail_url(val)
                                         if cleaned.startswith('http'):
@@ -379,12 +437,39 @@ def search_provider_robust(provider: str, q: str, page: int):
                                             break
                                 if thumb: break
 
+                        # Container data attributes or regex
                         if not thumb:
-                            meta = parse_metadata_fallback(full_url, "xhamster")
-                            thumb = meta.get("thumbnail", "")
+                            for attr in ['data-thumb', 'data-preview', 'data-poster', 'data-image', 'data-src']:
+                                val = container.get(attr, '')
+                                if val and val.startswith('http'):
+                                    thumb = clean_thumbnail_url(val)
+                                    break
+
+                        if not thumb:
+                            container_html = str(container)
+                            matches = re.findall(r'https?://[^\s<>"\']+(?:xhcdn|phncdn)\.com[^\s<>"\']+', container_html)
+                            for candidate in matches:
+                                if any(ext in candidate.lower() for ext in ['.jpg', '.jpeg', '.png', '.webp']) and \
+                                   not any(bad in candidate.lower() for bad in ['logo', 'svg', 'avatar', 'pixel', 'icon']):
+                                    thumb = candidate.split('"')[0].split("'")[0].split(' ')[0]
+                                    break
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                         if len(videos) >= 48: break
+
+                    # Parallel thumbnail resolver (runs concurrently in ~0.5s instead of sequential bottleneck)
+                    missing_thumbs = [v for v in videos if not v.get("thumbnail")]
+                    if missing_thumbs:
+                        def resolve_thumb(v):
+                            try:
+                                meta = parse_metadata_fallback(v["url"], "xhamster")
+                                if meta.get("thumbnail"):
+                                    v["thumbnail"] = meta["thumbnail"]
+                            except Exception:
+                                pass
+
+                        with ThreadPoolExecutor(max_workers=min(len(missing_thumbs), 30)) as pool:
+                            list(pool.map(resolve_thumb, missing_thumbs))
 
                 elif provider == "redtube":
                     items = soup.select('div.videoBox, li.videoblock, div.video-item, div.pb-card, div[class*="video"]')
@@ -486,72 +571,6 @@ def search_provider_robust(provider: str, q: str, page: int):
 
     search_cache[cache_key] = videos
     return videos
-
-def parse_metadata_fallback(url: str, provider: str) -> dict:
-    base_domain = "https://www.pornhub.com"
-    if "xhamster.com" in url:
-        base_domain = "https://xhamster.com"
-    elif "xnxx.com" in url:
-        base_domain = "https://www.xnxx.com"
-    elif "xvideos.com" in url:
-        base_domain = "https://www.xvideos.com"
-    elif "redtube.com" in url:
-        base_domain = "https://www.redtube.com"
-    elif "youporn.com" in url:
-        base_domain = "https://www.youporn.com"
-
-    url = re.sub(r'https?://[a-zA-Z0-9-]+\.' + provider + r'\.com', base_domain, url)
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cookie': 'has_accepted_cookie=1; age_verified=1;'
-    }
-    for attempt in range(3):
-        try:
-            resp = requests.get(url, headers=headers, timeout=8)
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                view_count = 0
-                upload_date = ""
-                poster_url = ""
-                scraped_title = ""
-
-                og_title = soup.find('meta', property='og:title')
-                if og_title and og_title.get('content'):
-                    scraped_title = og_title.get('content').replace('&amp;', '&').strip()
-
-                if not scraped_title:
-                    title_tag = soup.find('title')
-                    if title_tag:
-                        scraped_title = title_tag.get_text().replace('&amp;', '&').split('- RedTube')[0].split('- YouPorn')[0].split('- xHamster')[0].strip()
-
-                og_img = soup.find('meta', property='og:image')
-                if og_img and og_img.get('content'):
-                    poster_url = clean_thumbnail_url(og_img.get('content').replace('&amp;', '&'))
-
-                if not poster_url:
-                    img_json = re.search(r'"image_url"\s*:\s*"([^"]+)"', resp.text)
-                    if img_json:
-                        poster_url = clean_thumbnail_url(img_json.group(1).replace('\\/', '/'))
-
-                view_match = re.search(r'([\d,\.]+)\s*(?:Views|views|Vistas|M views|k views)', resp.text)
-                if view_match:
-                    raw_views = view_match.group(1).replace(',', '').replace('.', '')
-                    if 'k' in view_match.group(0).lower():
-                        view_count = int(float(raw_views.replace('k', '')) * 1000)
-                    elif 'm' in view_match.group(0).lower():
-                        view_count = int(float(raw_views.replace('m', '')) * 1000000)
-                    else:
-                        view_count = int(raw_views) if raw_views.isdigit() else 0
-
-                date_match = re.search(r'(\d{4}-\d{2}-\d{2})|(\d{1,2}\s+[a-zA-Z]+\s+\d{4})', resp.text)
-                if date_match:
-                    upload_date = date_match.group(0)
-
-                return {"view_count": view_count, "upload_date": upload_date, "thumbnail": poster_url, "title": scraped_title}
-        except Exception:
-            time.sleep(1.0)
-    return {"view_count": 0, "upload_date": "", "thumbnail": "", "title": ""}
 
 def extract_with_ytdlp(url: str) -> dict:
     is_pornhub = "pornhub.com" in url
