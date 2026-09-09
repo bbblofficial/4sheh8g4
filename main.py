@@ -188,7 +188,7 @@ def search_redtube_with_ytdlp(q: str, page: int) -> list:
                 title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
                 if any(bad in url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/', '/channels/', '/pornstar/', '/amateur/', 'help.pornhub.com', 'adtng.com', 'trafficjunky.net']):
                     continue
-                if title.replace(':', '').isdigit():
+                if title.replace(':', '').isdigit() or len(title) <= 2 or 'information/' in url:
                     continue
                 thumb = entry.get('thumbnail', '')
                 videos.append({
@@ -474,7 +474,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         full_url, title, thumb = "", "", ""
                         if item.name == 'a':
                             href = item.get('href', '')
-                            if not href or 'search=' in href or '/hot' in href or '/join' in href or '/channels/' in href or '/pornstar/' in href or '/amateur/' in href: continue
+                            if not href or any(b in href for b in ['search=', '/hot', '/join', '/channels/', '/pornstar/', '/amateur/', '/information/', 'help.pornhub', 'adtng.com', 'trafficjunky.net']): continue
                             parts = [p for p in href.split('/') if p]
                             if not parts or not parts[-1].isdigit(): continue
                             full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
@@ -488,7 +488,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                             a_tag = item.select_one('a[href]')
                             if not a_tag: continue
                             href = a_tag.get('href', '')
-                            if not href or 'search=' in href or '/hot' in href or '/join' in href or '/channels/' in href or '/pornstar/' in href or '/amateur/' in href: continue
+                            if not href or any(b in href for b in ['search=', '/hot', '/join', '/channels/', '/pornstar/', '/amateur/', '/information/', 'help.pornhub', 'adtng.com', 'trafficjunky.net']): continue
                             parts = [p for p in href.split('/') if p]
                             if not parts or not parts[-1].isdigit(): continue
                             full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
@@ -517,7 +517,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if not title or title.isdigit() or len(title) <= 2 or re.match(r'^\d{1,2}:\d{2}$', title):
                             title = vid_id.replace('-', ' ').title()
 
-                        if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']): continue
+                        if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/', 'adtng', 'trafficjunky']): continue
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "redtube"})
                         if len(videos) >= 48: break
