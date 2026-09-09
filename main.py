@@ -32,6 +32,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
+    target_lower = target.lower()
+    if "xhamster" in target_lower or "xhcdn" in target_lower:
+        ref = "https://xhamster.com/"
+    elif "xnxx" in target_lower:
+        ref = "https://www.xnxx.com/"
+    elif "xvideos" in target_lower:
+        ref = "https://www.xvideos.com/"
+    elif "redtube" in target_lower:
+        ref = "https://www.redtube.com/"
+    elif "youporn" in target_lower:
+        ref = "https://www.youporn.com/"
+    else:
+        ref = "https://www.pornhub.com/"
+        
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": ref,
+        "Origin": ref.rstrip('/'),
+        "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
+    }
+    if request_headers and "range" in request_headers:
+        headers["Range"] = request_headers["range"]
+    return headers
+
 def clean_thumbnail_url(raw_url: str) -> str:
     if not raw_url:
         return ""
@@ -44,7 +69,7 @@ def clean_thumbnail_url(raw_url: str) -> str:
                 candidates.append(url_part)
         if candidates:
             raw_url = candidates[-1]
-    
+
     raw_url = raw_url.strip()
     if raw_url.startswith('//'):
         raw_url = "https:" + raw_url
@@ -232,11 +257,7 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
         base_domain = "https://www.youporn.com"
 
     url = re.sub(r'https?://[a-zA-Z0-9-]+\.' + provider + r'\.com', base_domain, url)
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cookie': 'has_accepted_cookie=1; age_verified=1;'
-    }
+    headers = get_dynamic_headers(url)
     try:
         resp = requests.get(url, headers=headers, timeout=3.5)
         if resp.status_code == 200:
@@ -289,35 +310,22 @@ def search_provider_robust(provider: str, q: str, page: int):
         return search_cache[cache_key]
 
     videos = []
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"',
-        'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc; yp_access_confirmed=1; accessAgeConfirmed=1;'
-    }
+    dummy_url = f"https://www.{provider}.com/" if provider != "xhamster" else "https://xhamster.com/"
+    headers = get_dynamic_headers(dummy_url)
 
     if provider == "youporn":
         search_url = f"https://www.youporn.com/search/?query={quote(q)}&page={page}"
-        headers['Referer'] = 'https://www.youporn.com/'
     elif provider == "xhamster":
         search_url = f"https://xhamster.com/search/{quote(q)}" if page <= 1 else f"https://xhamster.com/search/{quote(q)}/{page}"
-        headers['Referer'] = 'https://xhamster.com/'
     elif provider == "redtube":
         search_url = f"https://www.redtube.com/?search={quote(q)}" if page <= 1 else f"https://www.redtube.com/?search={quote(q)}&page={page}"
-        headers['Referer'] = 'https://www.redtube.com/'
     elif provider == "xnxx":
         search_url = f"https://www.xnxx.com/search/{quote(q)}" if page <= 1 else f"https://www.xnxx.com/search/{quote(q)}/{page}"
-        headers['Referer'] = 'https://www.xnxx.com/'
     elif provider == "xvideos":
         p_val = page - 1 if page > 1 else 0
         search_url = f"https://www.xvideos.com/?k={quote(q)}" if p_val == 0 else f"https://www.xvideos.com/?k={quote(q)}&p={p_val}"
-        headers['Referer'] = 'https://www.xvideos.com/'
     else:
         search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
-        headers['Referer'] = 'https://www.pornhub.com/'
 
     for attempt in range(3):
         try:
@@ -533,7 +541,6 @@ def search_provider_robust(provider: str, q: str, page: int):
                         vid_id = vid_parts[-1] if vid_parts else "unknown"
 
                         if not vid_id.isdigit(): continue
-
                         if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/', 'adtng', 'trafficjunky']): continue
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "redtube"})
@@ -641,8 +648,6 @@ def extract_with_ytdlp(url: str) -> dict:
     elif "youporn.com" in url:
         provider = "youporn"
 
-    referer_url = f"https://www.{provider}.com/" if provider != "xhamster" else "https://xhamster.com/"
-
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -650,17 +655,7 @@ def extract_with_ytdlp(url: str) -> dict:
         'format': 'bestvideo+bestaudio/best',
         'nocheckcertificate': True,
         'age_limit': 21,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-            'Sec-Ch-Ua-Mobile': '?0',
-            'Sec-Ch-Ua-Platform': '"Windows"',
-            'Referer': referer_url,
-            'Origin': referer_url.rstrip('/'),
-            'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
-        }
+        'http_headers': get_dynamic_headers(url)
     }
 
     max_retries = 3
@@ -677,7 +672,7 @@ def extract_with_ytdlp(url: str) -> dict:
             view_count = info.get('view_count', 0)
 
             extra_meta = parse_metadata_fallback(url, provider)
-            
+
             if not is_pornhub and (not title or is_invalid_title(title) or (len(title) <= 8 and title.isalnum())):
                 if extra_meta.get("title") and not is_invalid_title(extra_meta.get("title")):
                     title = extra_meta.get("title")
@@ -686,7 +681,7 @@ def extract_with_ytdlp(url: str) -> dict:
 
             view_count = view_count or extra_meta.get("view_count", 0)
             upload_date = upload_date or extra_meta.get("upload_date", "")
-            
+
             all_thumbs = []
             safe_thumb = extra_meta.get("thumbnail", "")
             if safe_thumb and not safe_thumb.startswith("data:image"):
@@ -701,7 +696,7 @@ def extract_with_ytdlp(url: str) -> dict:
                     all_thumbs.append(t_url)
 
             clean_thumbs = [t for t in all_thumbs if 'hash=' not in t and 'validto=' not in t and 'hdnea=' not in t and 'svg' not in t and 'logo.jpg' not in t]
-            
+
             if clean_thumbs:
                 thumbnail = clean_thumbs[0]
                 thumbnails = clean_thumbs
@@ -715,7 +710,7 @@ def extract_with_ytdlp(url: str) -> dict:
                 f_url = f.get('url', '')
                 if not f_url: continue
                 if f.get('vcodec') == 'none': continue
-                
+
                 protocol = str(f.get('protocol', '')).lower()
                 ext = str(f.get('ext', '')).lower()
                 format_id = str(f.get('format_id', '')).lower()
@@ -724,7 +719,7 @@ def extract_with_ytdlp(url: str) -> dict:
 
                 is_hls = 'm3u8' in protocol or ext == 'm3u8' or '.m3u8' in f_url or 'hls' in format_id
                 height = f.get('height')
-                
+
                 if not height:
                     m = re.search(r'(\d{3,4})[pP]?', format_id + "-" + format_note + "-" + res_str)
                     if m: height = int(m.group(1))
@@ -775,7 +770,7 @@ def extract_with_ytdlp(url: str) -> dict:
                 "url": url,
                 "provider": provider
             }
-            
+
             if not is_pornhub: extraction_cache[url] = result
             return result
 
@@ -808,13 +803,9 @@ async def extract_endpoint(url: str):
 async def fallback_proxy_image(url: str):
     target = url.strip()
     if target.startswith('//'): target = "https:" + target
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://www.youporn.com/',
-        'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
-    }
-    
+
+    headers = get_dynamic_headers(target)
+
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
@@ -832,6 +823,7 @@ async def fallback_proxy_image(url: str):
         except Exception:
             await asyncio.sleep(0.5)
     return Response(status_code=404)
+
 @app.get("/proxy-m3u8")
 async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", request_host: str = ""):
     target = url.strip()
@@ -882,18 +874,12 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
         except Exception:
             await asyncio.sleep(0.5)
     return Response(status_code=502, content="Backend Proxy Error")
-    
+
 @app.get("/proxy-video")
 async def proxy_video(request: Request, url: str, sig: str = "", exp: str = "", request_host: str = ""):
     target = url.strip()
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
-        "Referer": "https://www.youporn.com/",
-        "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
-    }
-    if "range" in request.headers:
-        headers["Range"] = request.headers["range"]
-        
+    headers = get_dynamic_headers(target, request.headers)
+
     for attempt in range(3):
         try:
             client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
@@ -902,20 +888,26 @@ async def proxy_video(request: Request, url: str, sig: str = "", exp: str = "", 
             if resp.status_code in [200, 206]:
                 resp_headers = {
                     "Access-Control-Allow-Origin": "*",
-                    "Accept-Ranges": "bytes"
+                    "Accept-Ranges": "bytes",
+                    "Content-Type": "video/mp4"
                 }
                 for k in ["Content-Type", "Content-Length", "Content-Range"]:
-                    if k in resp.headers:
+                    if k in resp.headers and resp.headers[k]:
                         resp_headers[k] = resp.headers[k]
-                        
+
                 async def stream_generator():
                     try:
                         async for chunk in resp.aiter_bytes(chunk_size=65536):
                             yield chunk
                     finally:
+                        await resp.aclose()
                         await client.aclose()
 
-                return StreamingResponse(stream_generator(), status_code=resp.status_code, headers=resp_headers)
+                return StreamingResponse(
+                    stream_generator(), 
+                    status_code=resp.status_code, 
+                    headers=resp_headers
+                )
         except Exception:
             await asyncio.sleep(0.5)
     return Response(status_code=502)
