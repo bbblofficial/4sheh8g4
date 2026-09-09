@@ -50,6 +50,18 @@ def clean_thumbnail_url(raw_url: str) -> str:
         raw_url = "https:" + raw_url
     return raw_url
 
+def is_invalid_title(t: str) -> bool:
+    if not t:
+        return True
+    t_clean = t.strip()
+    if t_clean.isdigit() or len(t_clean) <= 2:
+        return True
+    if re.match(r'^(?:[A-Za-z]{2,3})?\s*\d{1,2}:\d{2}(?::\d{2})?$', t_clean, re.IGNORECASE):
+        return True
+    if re.match(r'^\d{1,2}:\d{2}(?::\d{2})?$', t_clean):
+        return True
+    return False
+
 def search_pornhub_with_ytdlp(q: str, page: int) -> list:
     videos = []
     search_term = f"phsearch48:{q}"
@@ -188,7 +200,7 @@ def search_redtube_with_ytdlp(q: str, page: int) -> list:
                 title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
                 if any(bad in url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/', '/channels/', '/pornstar/', '/amateur/', 'help.pornhub.com', 'adtng.com', 'trafficjunky.net']):
                     continue
-                if title.replace(':', '').isdigit() or len(title) <= 2 or 'information/' in url:
+                if is_invalid_title(title) or 'information/' in url:
                     continue
                 thumb = entry.get('thumbnail', '')
                 videos.append({
@@ -481,7 +493,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                             title = item.get('title') or item.get('alt') or item.get_text(strip=True)
                             img_tag = item.select_one('img')
                             if img_tag:
-                                if not title or title.isdigit() or len(title) <= 2 or re.match(r'^\d{1,2}:\d{2}$', title):
+                                if is_invalid_title(title):
                                     title = img_tag.get('alt') or title
                                 thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "")
                         else:
@@ -496,12 +508,12 @@ def search_provider_robust(provider: str, q: str, page: int):
                             title_tag = item.select_one('.video-title-text, a[title], span.title, a, p, h3, h4')
                             if title_tag:
                                 title = title_tag.get('title') or title_tag.get_text(strip=True)
-                            if not title or title.isdigit() or len(title) <= 2 or re.match(r'^\d{1,2}:\d{2}$', title):
+                            if is_invalid_title(title):
                                 title = a_tag.get('title', '')
                             
                             img_tag = item.select_one('img')
                             if img_tag:
-                                if not title or title.isdigit() or len(title) <= 2 or re.match(r'^\d{1,2}:\d{2}$', title):
+                                if is_invalid_title(title):
                                     title = img_tag.get('alt') or title
                                 thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "")
 
@@ -514,7 +526,7 @@ def search_provider_robust(provider: str, q: str, page: int):
 
                         if not vid_id.isdigit(): continue
 
-                        if not title or title.isdigit() or len(title) <= 2 or re.match(r'^\d{1,2}:\d{2}$', title):
+                        if is_invalid_title(title):
                             title = vid_id.replace('-', ' ').title()
 
                         if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/', 'adtng', 'trafficjunky']): continue
@@ -527,15 +539,17 @@ def search_provider_robust(provider: str, q: str, page: int):
                             meta = parse_metadata_fallback(v["url"], "redtube")
                             if meta.get("thumbnail") and (not v["thumbnail"] or 'rdtcdn.com' not in v["thumbnail"]):
                                 v["thumbnail"] = meta["thumbnail"]
-                            if meta.get("title") and (not v["title"] or v["title"].isdigit() or len(v["title"]) <= 2 or re.match(r'^\d{1,2}:\d{2}$', v["title"])):
+                            if meta.get("title") and is_invalid_title(v["title"]):
                                 v["title"] = meta["title"]
                         except Exception:
                             pass
 
-                    missing_rdt = [v for v in videos if not v.get("thumbnail") or not v.get("title") or v["title"].isdigit() or len(v["title"]) <= 2 or re.match(r'^\d{1,2}:\d{2}$', v["title"])]
+                    missing_rdt = [v for v in videos if not v.get("thumbnail") or is_invalid_title(v["title"])]
                     if missing_rdt:
                         with ThreadPoolExecutor(max_workers=min(len(missing_rdt), 30)) as pool:
                             list(pool.map(resolve_redtube, missing_rdt))
+                    
+                    videos = [v for v in videos if not is_invalid_title(v["title"])]
 
                 elif provider == "xnxx":
                     items = soup.select('div.mozaique div.thumb-block')
@@ -657,10 +671,10 @@ def extract_with_ytdlp(url: str) -> dict:
 
             extra_meta = parse_metadata_fallback(url, provider)
             
-            if not is_pornhub and (not title or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title) or (len(title) <= 8 and title.isalnum())):
+            if not is_pornhub and (not title or is_invalid_title(title) or (len(title) <= 8 and title.isalnum())):
                 if extra_meta.get("title"):
                     title = extra_meta.get("title")
-            if not title or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title):
+            if not title or is_invalid_title(title):
                 title = "Unknown Video"
 
             view_count = view_count or extra_meta.get("view_count", 0)
