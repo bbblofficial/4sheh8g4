@@ -56,9 +56,7 @@ def is_invalid_title(t: str) -> bool:
     t_clean = t.strip()
     if t_clean.isdigit() or len(t_clean) <= 2:
         return True
-    if re.match(r'^(?:[A-Za-z]{2,3})?\s*\d{1,2}:\d{2}(?::\d{2})?$', t_clean, re.IGNORECASE):
-        return True
-    if re.match(r'^\d{1,2}:\d{2}(?::\d{2})?$', t_clean):
+    if re.search(r'\d{1,2}:\d{2}', t_clean) and len(t_clean) <= 12:
         return True
     return False
 
@@ -84,6 +82,8 @@ def search_pornhub_with_ytdlp(q: str, page: int) -> list:
                 url = entry.get('url') or f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
                 title = html_parser.unescape(entry.get('title', 'Unknown Video'))
                 if any(bad in url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']):
+                    continue
+                if is_invalid_title(title):
                     continue
                 videos.append({
                     "vkey": vkey,
@@ -118,6 +118,8 @@ def search_youporn_with_ytdlp(q: str, page: int) -> list:
                 url = entry.get('url') or f"https://www.youporn.com/watch/{vkey}"
                 title = html_parser.unescape(entry.get('title', 'Unknown Video'))
                 if any(bad in url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']):
+                    continue
+                if is_invalid_title(title):
                     continue
                 videos.append({
                     "vkey": vkey,
@@ -157,6 +159,8 @@ def search_xhamster_with_ytdlp(q: str, page: int) -> list:
                     continue
                 title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
                 if any(bad in url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']):
+                    continue
+                if is_invalid_title(title):
                     continue
                 thumb = entry.get('thumbnail', '')
                 if not thumb and entry.get('thumbnails'):
@@ -333,7 +337,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                             title = item.get('title') or item.get('alt') or item.get_text(strip=True)
                             img_tag = item.select_one('img')
                             if img_tag:
-                                if not title or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title):
+                                if is_invalid_title(title):
                                     title = img_tag.get('alt') or title
                                 thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
                         else:
@@ -345,21 +349,19 @@ def search_provider_robust(provider: str, q: str, page: int):
                             title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else a_tag.get('title', '')
                             img_tag = item.select_one('img')
                             if img_tag:
-                                if not title or title == "Unknown Video" or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title):
+                                if is_invalid_title(title):
                                     title = img_tag.get('alt') or title
                                 thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
 
                         full_url = full_url.split('?')[0].rstrip('/')
                         if not full_url or full_url in seen: continue
                         if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']): continue
+                        if is_invalid_title(title): continue
                         seen.add(full_url)
 
                         match_id = re.search(r'/watch/(\d+)', full_url)
                         if not match_id: continue
                         vkey = match_id.group(1)
-
-                        if not title or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title) or 'youporn' in title.lower():
-                            title = f"YouPorn Video {vkey}"
 
                         videos.append({
                             "vkey": vkey,
@@ -392,6 +394,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         title = title_tag.get('alt') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
                         
                         if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']): continue
+                        if is_invalid_title(title): continue
                         seen.add(full_url)
 
                         img_tag = item.select_one('img')
@@ -426,6 +429,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                             title = a_tag.get('title') or vid_id.replace('-', ' ').title()
 
                         if any(bad in title.lower() for bad in ['sponsor', 'promo', 'ad/']): continue
+                        if is_invalid_title(title): continue
                         seen.add(full_url)
 
                         thumb = ""
@@ -474,11 +478,15 @@ def search_provider_robust(provider: str, q: str, page: int):
                                 meta = parse_metadata_fallback(v["url"], "xhamster")
                                 if meta.get("thumbnail"):
                                     v["thumbnail"] = meta["thumbnail"]
+                                if meta.get("title") and not is_invalid_title(meta["title"]):
+                                    v["title"] = meta["title"]
                             except Exception:
                                 pass
 
                         with ThreadPoolExecutor(max_workers=min(len(missing_thumbs), 30)) as pool:
                             list(pool.map(resolve_thumb, missing_thumbs))
+                    
+                    videos = [v for v in videos if not is_invalid_title(v["title"])]
 
                 elif provider == "redtube":
                     items = soup.select('div.videoBox, li.videoblock, div.video-item, div.pb-card, div.video-tile, div[class*="video"], a[href*="/"]')
@@ -526,9 +534,6 @@ def search_provider_robust(provider: str, q: str, page: int):
 
                         if not vid_id.isdigit(): continue
 
-                        if is_invalid_title(title):
-                            title = vid_id.replace('-', ' ').title()
-
                         if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/', 'adtng', 'trafficjunky']): continue
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "redtube"})
@@ -539,7 +544,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                             meta = parse_metadata_fallback(v["url"], "redtube")
                             if meta.get("thumbnail") and (not v["thumbnail"] or 'rdtcdn.com' not in v["thumbnail"]):
                                 v["thumbnail"] = meta["thumbnail"]
-                            if meta.get("title") and is_invalid_title(v["title"]):
+                            if meta.get("title") and not is_invalid_title(meta["title"]):
                                 v["title"] = meta["title"]
                         except Exception:
                             pass
@@ -564,6 +569,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
 
                         if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']): continue
+                        if is_invalid_title(title): continue
                         if full_url in seen: continue
                         seen.add(full_url)
 
@@ -589,6 +595,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
 
                         if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']): continue
+                        if is_invalid_title(title): continue
                         if full_url in seen: continue
                         seen.add(full_url)
 
@@ -672,7 +679,7 @@ def extract_with_ytdlp(url: str) -> dict:
             extra_meta = parse_metadata_fallback(url, provider)
             
             if not is_pornhub and (not title or is_invalid_title(title) or (len(title) <= 8 and title.isalnum())):
-                if extra_meta.get("title"):
+                if extra_meta.get("title") and not is_invalid_title(extra_meta.get("title")):
                     title = extra_meta.get("title")
             if not title or is_invalid_title(title):
                 title = "Unknown Video"
