@@ -116,6 +116,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
                 "url": full_url,
                 "provider": "youporn"
             })
+            if len(videos) >= 48: break
 
     elif provider == "pornhub":
         items = soup.select('li.videoblock, li.pcVideoListItem, li.js-pop, li.videoBox, ul#videoSearchResult li, div.search-video-list li')
@@ -149,6 +150,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
                 "url": full_url,
                 "provider": "pornhub"
             })
+            if len(videos) >= 48: break
 
     elif provider == "xhamster":
         items = soup.select('div.video-thumb, div.thumb-list__item, div.video-container, div.cell, article, div.video-thumb-info')
@@ -216,6 +218,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
                     thumb = ""
 
             videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
+            if len(videos) >= 48: break
 
     elif provider == "redtube":
         items = soup.select('div.videoBox, li.videoblock, div.video-item, div.pb-card, div[class*="video"]')
@@ -253,6 +256,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
                 thumb = (img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or "")
 
             videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "redtube"})
+            if len(videos) >= 48: break
 
     elif provider == "xnxx":
         items = soup.select('div.mozaique div.thumb-block')
@@ -270,6 +274,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
             thumb = img_tag.get('data-src') or img_tag.get('src') or item.select_one('[data-videothumb]').get('data-videothumb', '') if img_tag else ""
 
             videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xnxx"})
+            if len(videos) >= 48: break
 
     elif provider == "xvideos":
         items = soup.select('div.mozaique div.thumb-block')
@@ -290,6 +295,7 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
             thumb = img_tag.get('data-src') or img_tag.get('src') or "" if img_tag else ""
 
             videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xvideos"})
+            if len(videos) >= 48: break
 
     return videos
 
@@ -311,7 +317,7 @@ async def search_provider_robust(provider: str, q: str, page: int):
     raw_videos = []
     current_page = page
 
-    while len(raw_videos) < 20 and current_page < page + 5:
+    while len(raw_videos) < 48 and current_page < page + 5:
         page_videos = await fetch_page_videos(provider, q, current_page, headers)
         if not page_videos:
             break
