@@ -37,18 +37,19 @@ COMMON_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 def clean_thumbnail_url(raw_url: str) -> str:
     if not raw_url:
         return ""
-    raw_url = str(raw_url).strip()
-    if raw_url.startswith("data:") or "base64," in raw_url or "blank.gif" in raw_url or "pixel.gif" in raw_url:
-        return ""
     if ',' in raw_url and ('http://' in raw_url or 'https://' in raw_url):
-        parts = re.split(r',\s*', raw_url)
-        candidates = [p.strip().split(' ')[0] for p in parts if p.strip().startswith('http') and not p.strip().startswith('data:')]
+        parts = re.split(r',\s+', raw_url)
+        candidates = []
+        for p in parts:
+            url_part = p.strip().split(' ')[0]
+            if url_part.startswith('http'):
+                candidates.append(url_part)
         if candidates:
             raw_url = candidates[-1]
+    
+    raw_url = raw_url.strip()
     if raw_url.startswith('//'):
         raw_url = "https:" + raw_url
-    if not raw_url.startswith('http'):
-        return ""
     return raw_url
 
 def clean_media_stream_url(raw_url: str) -> str:
@@ -65,8 +66,6 @@ def is_invalid_title(t: str) -> bool:
         return True
     t_clean = t.strip()
     if t_clean.isdigit() or len(t_clean) <= 2:
-        return True
-    if re.search(r'^(?:[A-Za-z]{2,3})?\s*\d{1,2}:\d{2}(?::\d{2})?$', t_clean):
         return True
     if re.search(r'\d{1,2}:\d{2}', t_clean) and len(t_clean) <= 12:
         return True
@@ -239,13 +238,15 @@ def search_pornhub_with_ytdlp(q: str, page: int) -> list:
             info = ydl.extract_info(search_term, download=False)
             entries = info.get('entries', []) if info else []
             for entry in entries:
-                if not entry: continue
+                if not entry:
+                    continue
                 vkey = entry.get('id') or ''
                 url = entry.get('url') or f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
                 title = html_parser.unescape(entry.get('title', 'Unknown Video'))
                 if any(bad in url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']):
                     continue
-                if is_invalid_title(title): continue
+                if is_invalid_title(title):
+                    continue
                 videos.append({
                     "vkey": vkey,
                     "title": title,
@@ -273,13 +274,15 @@ def search_youporn_with_ytdlp(q: str, page: int) -> list:
             info = ydl.extract_info(search_term, download=False)
             entries = info.get('entries', []) if info else []
             for entry in entries:
-                if not entry: continue
+                if not entry:
+                    continue
                 vkey = entry.get('id') or ''
                 url = entry.get('url') or f"https://www.youporn.com/watch/{vkey}"
                 title = html_parser.unescape(entry.get('title', 'Unknown Video'))
                 if any(bad in url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']):
                     continue
-                if is_invalid_title(title): continue
+                if is_invalid_title(title):
+                    continue
                 videos.append({
                     "vkey": vkey,
                     "title": title,
@@ -307,17 +310,20 @@ def search_xhamster_with_ytdlp(q: str, page: int) -> list:
             info = ydl.extract_info(search_url, download=False)
             entries = info.get('entries', []) if info else []
             for entry in entries:
-                if not entry: continue
+                if not entry:
+                    continue
                 url = entry.get('url', '')
                 vkey = entry.get('id', '')
                 if not vkey and url:
                     parts = [p for p in url.split('/') if p]
                     vkey = parts[-1] if parts else ""
-                if not vkey or '/videos/' not in url: continue
+                if not vkey or '/videos/' not in url:
+                    continue
                 title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
                 if any(bad in url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']):
                     continue
-                if is_invalid_title(title): continue
+                if is_invalid_title(title):
+                    continue
                 thumb = entry.get('thumbnail', '')
                 if not thumb and entry.get('thumbnails'):
                     thumb = entry.get('thumbnails')[0].get('url', '')
@@ -348,17 +354,20 @@ def search_redtube_with_ytdlp(q: str, page: int) -> list:
             info = ydl.extract_info(search_url, download=False)
             entries = info.get('entries', []) if info else []
             for entry in entries:
-                if not entry: continue
+                if not entry:
+                    continue
                 url = entry.get('url', '')
                 vkey = entry.get('id', '')
                 if not vkey and url:
                     parts = [p for p in url.split('/') if p]
                     vkey = parts[-1] if parts else ""
-                if not vkey or not vkey.isdigit(): continue
+                if not vkey or not vkey.isdigit():
+                    continue
                 title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
                 if any(bad in url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/', '/channels/', '/pornstar/', '/amateur/', 'help.pornhub.com', 'adtng.com', 'trafficjunky.net']):
                     continue
-                if is_invalid_title(title) or 'information/' in url: continue
+                if is_invalid_title(title) or 'information/' in url:
+                    continue
                 thumb = entry.get('thumbnail', '')
                 videos.append({
                     "vkey": vkey,
@@ -373,13 +382,20 @@ def search_redtube_with_ytdlp(q: str, page: int) -> list:
 
 def parse_metadata_fallback(url: str, provider: str) -> dict:
     base_domain = "https://www.pornhub.com"
-    if "xhamster.com" in url: base_domain = "https://xhamster.com"
-    elif "xnxx.com" in url: base_domain = "https://www.xnxx.com"
-    elif "xvideos.com" in url: base_domain = "https://www.xvideos.com"
-    elif "redtube.com" in url: base_domain = "https://www.redtube.com"
-    elif "youporn.com" in url: base_domain = "https://www.youporn.com"
-    elif "ok.xxx" in url: base_domain = "https://ok.xxx"
-    elif "pornhat.com" in url: base_domain = "https://www.pornhat.com"
+    if "xhamster.com" in url:
+        base_domain = "https://xhamster.com"
+    elif "xnxx.com" in url:
+        base_domain = "https://www.xnxx.com"
+    elif "xvideos.com" in url:
+        base_domain = "https://www.xvideos.com"
+    elif "redtube.com" in url:
+        base_domain = "https://www.redtube.com"
+    elif "youporn.com" in url:
+        base_domain = "https://www.youporn.com"
+    elif "ok.xxx" in url:
+        base_domain = "https://ok.xxx"
+    elif "pornhat.com" in url:
+        base_domain = "https://www.pornhat.com"
 
     url = re.sub(r'https?://[a-zA-Z0-9-]+\.' + provider + r'\.com', base_domain, url)
     headers = {
@@ -456,7 +472,7 @@ def search_provider_robust(provider: str, q: str, page: int):
         'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
         'Sec-Ch-Ua-Mobile': '?0',
         'Sec-Ch-Ua-Platform': '"Windows"',
-        'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
+        'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc; yp_access_confirmed=1; accessAgeConfirmed=1;'
     }
 
     if provider == "youporn":
@@ -507,7 +523,8 @@ def search_provider_robust(provider: str, q: str, page: int):
                             title = item.get('title') or item.get('alt') or item.get_text(strip=True)
                             img_tag = item.select_one('img')
                             if img_tag:
-                                if is_invalid_title(title): title = img_tag.get('alt') or title
+                                if is_invalid_title(title):
+                                    title = img_tag.get('alt') or title
                                 thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
                         else:
                             a_tag = item.select_one('a[href*="/watch/"]')
@@ -518,7 +535,8 @@ def search_provider_robust(provider: str, q: str, page: int):
                             title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else a_tag.get('title', '')
                             img_tag = item.select_one('img')
                             if img_tag:
-                                if is_invalid_title(title): title = img_tag.get('alt') or title
+                                if is_invalid_title(title):
+                                    title = img_tag.get('alt') or title
                                 thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
 
                         full_url = full_url.split('?')[0].rstrip('/')
@@ -531,7 +549,13 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if not match_id: continue
                         vkey = match_id.group(1)
 
-                        videos.append({"vkey": vkey, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "youporn"})
+                        videos.append({
+                            "vkey": vkey,
+                            "title": html_parser.unescape(title),
+                            "thumbnail": thumb,
+                            "url": full_url,
+                            "provider": "youporn"
+                        })
                         if len(videos) >= 48: break
 
                 elif provider == "pornhub":
@@ -551,10 +575,10 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if not vkey: continue
                         full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
                         if full_url in seen: continue
-
+                        
                         title_tag = item.select_one('.title a, a.title, img[alt]')
                         title = title_tag.get('alt') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
-
+                        
                         if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']): continue
                         if is_invalid_title(title): continue
                         seen.add(full_url)
@@ -567,7 +591,8 @@ def search_provider_robust(provider: str, q: str, page: int):
 
                 elif provider == "xhamster":
                     items = soup.select('div.thumb-list__item, article.video-thumb, div.video-container, div[class*="video-thumb"], div.video-box, div[class*="video-card"]')
-                    if not items: items = soup.select('a[href*="/videos/"]')
+                    if not items:
+                        items = soup.select('a[href*="/videos/"]')
                     for item in items:
                         a_tag = item if item.name == 'a' else item.select_one('a[href*="/videos/"]')
                         if not a_tag: continue
@@ -575,17 +600,19 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if not href or '/videos/' not in href: continue
                         full_url = href if href.startswith('http') else f"https://xhamster.com{href}"
                         full_url = full_url.split('?')[0].rstrip('/')
-
+                        
                         if any(bad in full_url.lower() for bad in ['/pornstars/', '/channels/', '/creators/', '/categories/', '/tags/', '/join', 'sponsor', 'promo']): continue
                         if full_url in seen: continue
-
+                        
                         vid_parts = [p for p in full_url.split('/') if p]
                         vid_id = vid_parts[-1] if vid_parts else "unknown"
 
                         title_tag = item.select_one('a.video-thumb__title, span.video-thumb__title-text, [title], h4, p') if item.name != 'a' else item
                         title = ""
-                        if title_tag: title = title_tag.get('title') or title_tag.get_text(strip=True)
-                        if not title or title == vid_id or 'xhamster' in title.lower(): title = a_tag.get('title') or vid_id.replace('-', ' ').title()
+                        if title_tag:
+                            title = title_tag.get('title') or title_tag.get_text(strip=True)
+                        if not title or title == vid_id or 'xhamster' in title.lower():
+                            title = a_tag.get('title') or vid_id.replace('-', ' ').title()
 
                         if any(bad in title.lower() for bad in ['sponsor', 'promo', 'ad/']): continue
                         if is_invalid_title(title): continue
@@ -593,7 +620,7 @@ def search_provider_robust(provider: str, q: str, page: int):
 
                         thumb = ""
                         container = item if item.name != 'a' else (item.parent.parent if item.parent else item)
-
+                        
                         for noscript in container.select('noscript'):
                             ns_match = re.search(r'https?://[^\s<>"\']+\.(?:xhcdn|phncdn)\.com[^\s<>"\']+(?:\.jpg|\.jpeg|\.png|\.webp)', noscript.text)
                             if ns_match:
@@ -602,11 +629,11 @@ def search_provider_robust(provider: str, q: str, page: int):
 
                         if not thumb:
                             for tag in container.select('img, source'):
-                                for attr in ['data-webp', 'data-original', 'data-srcset', 'srcset', 'data-src', 'data-lazy-src', 'data-thumb', 'data-image', 'src']:
+                                for attr in ['data-srcset', 'srcset', 'data-src', 'data-lazy-src', 'data-original', 'data-thumb', 'data-image', 'src']:
                                     val = tag.get(attr, '')
                                     if val and ('xhcdn' in val or 'phncdn' in val):
                                         cleaned = clean_thumbnail_url(val)
-                                        if cleaned:
+                                        if cleaned.startswith('http'):
                                             thumb = cleaned
                                             break
                                 if thumb: break
@@ -616,154 +643,156 @@ def search_provider_robust(provider: str, q: str, page: int):
 
                     missing_thumbs = [v for v in videos if not v.get("thumbnail")]
                     if missing_thumbs:
-                        def resolve_xh_thumb(v):
+                        def resolve_thumb(v):
                             try:
                                 meta = parse_metadata_fallback(v["url"], "xhamster")
-                                if meta.get("thumbnail"): v["thumbnail"] = meta["thumbnail"]
-                                if meta.get("title") and not is_invalid_title(meta["title"]): v["title"] = meta["title"]
-                            except Exception: pass
+                                if meta.get("thumbnail"):
+                                    v["thumbnail"] = meta["thumbnail"]
+                                if meta.get("title") and not is_invalid_title(meta["title"]):
+                                    v["title"] = meta["title"]
+                            except Exception:
+                                pass
 
                         with ThreadPoolExecutor(max_workers=min(len(missing_thumbs), 30)) as pool:
-                            list(pool.map(resolve_xh_thumb, missing_thumbs))
-
+                            list(pool.map(resolve_thumb, missing_thumbs))
+                    
                     videos = [v for v in videos if not is_invalid_title(v["title"])]
 
                 elif provider == "redtube":
                     items = soup.select('div.videoBox, li.videoblock, div.video-item, div.pb-card, div.video-tile, div[class*="video"], a[href*="/"]')
                     for item in items:
-                        a_tag = item if item.name == 'a' else item.select_one('a[href]')
-                        if not a_tag: continue
-                        href = a_tag.get('href', '')
-                        if not href: continue
+                        full_url, title, thumb = "", "", ""
+                        if item.name == 'a':
+                            href = item.get('href', '')
+                            if not href or any(b in href for b in ['search=', '/hot', '/join', '/channels/', '/pornstar/', '/amateur/', '/information/', 'help.pornhub', 'adtng.com', 'trafficjunky.net']): continue
+                            parts = [p for p in href.split('/') if p]
+                            if not parts or not parts[-1].isdigit(): continue
+                            full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
+                            title = item.get('title') or item.get('alt') or item.get_text(strip=True)
+                            img_tag = item.select_one('img')
+                            if img_tag:
+                                if is_invalid_title(title):
+                                    title = img_tag.get('alt') or title
+                                thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "")
+                        else:
+                            a_tag = item.select_one('a[href]')
+                            if not a_tag: continue
+                            href = a_tag.get('href', '')
+                            if not href or any(b in href for b in ['search=', '/hot', '/join', '/channels/', '/pornstar/', '/amateur/', '/information/', 'help.pornhub', 'adtng.com', 'trafficjunky.net']): continue
+                            parts = [p for p in href.split('/') if p]
+                            if not parts or not parts[-1].isdigit(): continue
+                            full_url = href if href.startswith('http') else f"https://www.redtube.com{href}"
+                            
+                            title_tag = item.select_one('.video-title-text, a[title], span.title, a, p, h3, h4')
+                            if title_tag:
+                                title = title_tag.get('title') or title_tag.get_text(strip=True)
+                            if is_invalid_title(title):
+                                title = a_tag.get('title', '')
+                            
+                            img_tag = item.select_one('img')
+                            if img_tag:
+                                if is_invalid_title(title):
+                                    title = img_tag.get('alt') or title
+                                thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "")
 
-                        match_id = re.search(r'redtube\.com/(\d+)', href)
-                        if not match_id and href.startswith('/'):
-                            parts = [p for p in href.split('?')[0].split('/') if p]
-                            if parts and parts[-1].isdigit():
-                                match_id = re.match(r'^(\d+)$', parts[-1])
-
-                        if not match_id: continue
-                        vid_id = match_id.group(1)
-                        full_url = f"https://www.redtube.com/{vid_id}"
-
-                        if full_url in seen: continue
+                        full_url = full_url.split('?')[0].rstrip('/')
+                        if not full_url or full_url in seen: continue
                         seen.add(full_url)
 
-                        title_tag = item.select_one('.video-title-text, a[title], span.title, p, h3, h4') if item.name != 'a' else a_tag
-                        title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else ""
-                        if is_invalid_title(title): title = a_tag.get('title', '')
+                        vid_parts = [p for p in full_url.split('/') if p]
+                        vid_id = vid_parts[-1] if vid_parts else "unknown"
 
-                        img_tag = item.select_one('img')
-                        thumb = ""
-                        if img_tag:
-                            if is_invalid_title(title): title = img_tag.get('alt') or title
-                            for attr in ['data-src', 'data-lazy-src', 'data-image', 'data-thumb', 'src']:
-                                val = img_tag.get(attr, '')
-                                cleaned = clean_thumbnail_url(val)
-                                if cleaned:
-                                    thumb = cleaned
-                                    break
+                        if not vid_id.isdigit(): continue
 
-                        if is_invalid_title(title): title = vid_id
+                        if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/', 'adtng', 'trafficjunky']): continue
+
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "redtube"})
                         if len(videos) >= 48: break
 
                     def resolve_redtube(v):
                         try:
                             meta = parse_metadata_fallback(v["url"], "redtube")
-                            if meta.get("thumbnail") and not v["thumbnail"]: v["thumbnail"] = meta["thumbnail"]
-                            if meta.get("title") and (not v["title"] or is_invalid_title(v["title"])): v["title"] = meta["title"]
-                        except Exception: pass
+                            if meta.get("thumbnail") and (not v["thumbnail"] or 'rdtcdn.com' not in v["thumbnail"]):
+                                v["thumbnail"] = meta["thumbnail"]
+                            if meta.get("title") and not is_invalid_title(meta["title"]):
+                                v["title"] = meta["title"]
+                        except Exception:
+                            pass
 
                     missing_rdt = [v for v in videos if not v.get("thumbnail") or is_invalid_title(v["title"])]
                     if missing_rdt:
                         with ThreadPoolExecutor(max_workers=min(len(missing_rdt), 30)) as pool:
                             list(pool.map(resolve_redtube, missing_rdt))
-
+                    
                     videos = [v for v in videos if not is_invalid_title(v["title"])]
 
-                elif provider in ["okxxx", "ok", "ok.xxx", "pornhat", "pornhat.com"]:
-                    is_ok = provider in ["okxxx", "ok", "ok.xxx"]
-                    domain = "ok.xxx" if is_ok else "www.pornhat.com"
-                    items = soup.select('div.item, div.video-item, div.thumb-block, div.thumb, div[class*="item"], div[class*="video"], a[href*="/video/"]')
+                elif provider in ["okxxx", "ok", "pornhat"]:
+                    items = soup.select('div.video-box, div.thumb-block, div.item, article, div[class*="video"], div[class*="thumb"], a[href*="/video/"]')
                     for item in items:
-                        a_tag = item if item.name == 'a' else item.select_one('a[href*="/video/"]')
-                        if not a_tag: continue
-                        href = a_tag.get('href', '')
-                        if not href or '/video/' not in href: continue
-
-                        if is_ok:
-                            match_id = re.search(r'/video/(\d+)', href)
-                            if not match_id: continue
-                            vid_id = match_id.group(1)
-                            full_url = f"https://ok.xxx/video/{vid_id}/"
-                        else:
-                            parts = [p for p in href.split('?')[0].split('/') if p]
-                            vid_id = parts[-1] if parts else "unknown"
+                        full_url, title, thumb = "", "", ""
+                        if item.name == 'a':
+                            href = item.get('href', '')
+                            if not href or '/video/' not in href: continue
+                            domain = 'ok.xxx' if provider in ['okxxx', 'ok'] else 'www.pornhat.com'
                             full_url = href if href.startswith('http') else f"https://{domain}{href}"
+                            title = item.get('title') or item.get('alt') or item.get_text(strip=True)
+                            img_tag = item.select_one('img')
+                            if img_tag:
+                                if is_invalid_title(title):
+                                    title = img_tag.get('alt') or title
+                                thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "")
+                        else:
+                            a_tag = item.select_one('a[href*="/video/"]')
+                            if not a_tag: continue
+                            href = a_tag.get('href', '')
+                            domain = 'ok.xxx' if provider in ['okxxx', 'ok'] else 'www.pornhat.com'
+                            full_url = href if href.startswith('http') else f"https://{domain}{href}"
+                            
+                            title_tag = item.select_one('.title, a[title], span.title, a, p, h3, h4')
+                            if title_tag:
+                                title = title_tag.get('title') or title_tag.get_text(strip=True)
+                            if is_invalid_title(title):
+                                title = a_tag.get('title', '')
+                            
+                            img_tag = item.select_one('img')
+                            if img_tag:
+                                if is_invalid_title(title):
+                                    title = img_tag.get('alt') or title
+                                thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "")
 
                         full_url = full_url.split('?')[0].rstrip('/')
-                        if full_url in seen: continue
+                        if not full_url or full_url in seen: continue
+                        if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']): continue
+                        if is_invalid_title(title): continue
                         seen.add(full_url)
 
-                        title_tag = item.select_one('.title, a.title, .video-title, strong, h3, h4, p') if item.name != 'a' else a_tag
-                        title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else ""
-                        if is_invalid_title(title): title = a_tag.get('title', '')
+                        vid_parts = [p for p in full_url.split('/') if p]
+                        vid_id = vid_parts[-1] if vid_parts else "unknown"
 
-                        container = item if item.name != 'a' else (item.parent if item.parent else item)
-                        thumb = ""
-                        for noscript in container.select('noscript'):
-                            ns_match = re.search(r'https?://[^\s<>"\']+\.(?:jpg|jpeg|png|webp)', noscript.text)
-                            if ns_match:
-                                cleaned = clean_thumbnail_url(ns_match.group(0))
-                                if cleaned:
-                                    thumb = cleaned
-                                    break
-
-                        if not thumb:
-                            for img in container.select('img'):
-                                if is_invalid_title(title): title = img.get('alt') or title
-                                for attr in ['data-webp', 'data-original', 'data-src', 'data-lazy-src', 'data-lazy', 'data-thumb', 'data-image', 'data-poster', 'data-preview', 'srcset', 'data-srcset', 'src']:
-                                    val = img.get(attr, '')
-                                    cleaned = clean_thumbnail_url(val)
-                                    if cleaned:
-                                        thumb = cleaned
-                                        break
-                                if thumb: break
-
-                        if not thumb:
-                            for attr in ['data-webp', 'data-original', 'data-thumb', 'data-preview', 'data-poster', 'data-image', 'data-src']:
-                                val = container.get(attr, '')
-                                cleaned = clean_thumbnail_url(val)
-                                if cleaned:
-                                    thumb = cleaned
-                                    break
-
-                        if any(bad in full_url.lower() or bad in title.lower() for bad in ['/join', 'sponsor', 'promo', 'ad/']):
-                            continue
-
-                        prov_key = "okxxx" if is_ok else "pornhat"
                         videos.append({
                             "vkey": vid_id,
-                            "title": html_parser.unescape(title) if not is_invalid_title(title) else vid_id,
+                            "title": html_parser.unescape(title),
                             "thumbnail": thumb,
                             "url": full_url,
-                            "provider": prov_key
+                            "provider": "okxxx" if provider in ["okxxx", "ok"] else "pornhat"
                         })
                         if len(videos) >= 48: break
 
                     missing_items = [v for v in videos if not v.get("thumbnail") or is_invalid_title(v["title"])]
                     if missing_items:
-                        def resolve_kvs(v):
+                        def resolve_other(v):
                             try:
                                 meta = parse_metadata_fallback(v["url"], v["provider"])
-                                if meta.get("thumbnail") and not v["thumbnail"]: v["thumbnail"] = meta["thumbnail"]
-                                if meta.get("title") and not is_invalid_title(meta["title"]): v["title"] = meta["title"]
-                            except Exception: pass
+                                if meta.get("thumbnail") and not v["thumbnail"]:
+                                    v["thumbnail"] = meta["thumbnail"]
+                                if meta.get("title") and not is_invalid_title(meta["title"]):
+                                    v["title"] = meta["title"]
+                            except Exception:
+                                pass
 
                         with ThreadPoolExecutor(max_workers=min(len(missing_items), 30)) as pool:
-                            list(pool.map(resolve_kvs, missing_items))
-
+                            list(pool.map(resolve_other, missing_items))
+                    
                     videos = [v for v in videos if not is_invalid_title(v["title"])]
 
                 elif provider == "xnxx":
@@ -773,7 +802,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if not a_tag: continue
                         href = a_tag.get('href', '')
                         full_url = f"https://www.xnxx.com{href}" if href.startswith('/') else href
-
+                        
                         vid_id = href.split('/')[1] if len(href.split('/')) > 1 else href
                         title_tag = item.select_one('div.thumb-under a[title], div.thumb-under a')
                         title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
@@ -800,7 +829,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if clean_href.endswith('_') or clean_href.endswith('/_') or len(clean_href.split('/')) < 3:
                             clean_href = f"/{vid_id}/video_stream"
                         full_url = f"https://www.xvideos.com{clean_href}" if clean_href.startswith('/') else clean_href
-
+                        
                         title_tag = item.select_one('p.title a')
                         title = title_tag.get('title') or title_tag.get_text(strip=True) if title_tag else "Unknown Video"
 
@@ -840,13 +869,20 @@ def extract_with_ytdlp(url: str) -> dict:
         return extraction_cache[url]
 
     provider = "pornhub"
-    if "xhamster.com" in url: provider = "xhamster"
-    elif "xnxx.com" in url: provider = "xnxx"
-    elif "xvideos.com" in url: provider = "xvideos"
-    elif "redtube.com" in url: provider = "redtube"
-    elif "youporn.com" in url: provider = "youporn"
-    elif "ok.xxx" in url: provider = "okxxx"
-    elif "pornhat.com" in url: provider = "pornhat"
+    if "xhamster.com" in url:
+        provider = "xhamster"
+    elif "xnxx.com" in url:
+        provider = "xnxx"
+    elif "xvideos.com" in url:
+        provider = "xvideos"
+    elif "redtube.com" in url:
+        provider = "redtube"
+    elif "youporn.com" in url:
+        provider = "youporn"
+    elif "ok.xxx" in url:
+        provider = "okxxx"
+    elif "pornhat.com" in url:
+        provider = "pornhat"
 
     if provider in ["okxxx", "pornhat"]:
         res = extract_kvs_direct(url, provider)
@@ -854,8 +890,7 @@ def extract_with_ytdlp(url: str) -> dict:
             extraction_cache[url] = res
             return res
 
-    if "xhamster.com" in url: referer_url = "https://xhamster.com/"
-    else: referer_url = f"https://www.{provider}.com/"
+    referer_url = f"https://www.{provider}.com/" if provider not in ["xhamster", "okxxx"] else ("https://xhamster.com/" if provider == "xhamster" else "https://ok.xxx/")
 
     ydl_opts = {
         'quiet': True,
@@ -865,7 +900,7 @@ def extract_with_ytdlp(url: str) -> dict:
         'nocheckcertificate': True,
         'age_limit': 21,
         'http_headers': {
-            'User-Agent': COMMON_USER_AGENT,
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
             'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
@@ -882,12 +917,8 @@ def extract_with_ytdlp(url: str) -> dict:
 
     for attempt in range(max_retries):
         try:
-            info = {}
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False) or {}
-            except Exception as e:
-                last_error = str(e)
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
 
             title = html_parser.unescape(info.get('title', ''))
             duration = info.get('duration', 0)
@@ -895,6 +926,7 @@ def extract_with_ytdlp(url: str) -> dict:
             view_count = info.get('view_count', 0)
 
             extra_meta = parse_metadata_fallback(url, provider)
+            
             if not is_pornhub and (not title or is_invalid_title(title) or (len(title) <= 8 and title.isalnum())):
                 if extra_meta.get("title") and not is_invalid_title(extra_meta.get("title")):
                     title = extra_meta.get("title")
@@ -903,31 +935,36 @@ def extract_with_ytdlp(url: str) -> dict:
 
             view_count = view_count or extra_meta.get("view_count", 0)
             upload_date = upload_date or extra_meta.get("upload_date", "")
-
+            
             all_thumbs = []
             safe_thumb = extra_meta.get("thumbnail", "")
-            if safe_thumb:
-                cleaned = clean_thumbnail_url(safe_thumb)
-                if cleaned: all_thumbs.append(cleaned)
+            if safe_thumb and not safe_thumb.startswith("data:image"):
+                all_thumbs.append(clean_thumbnail_url(safe_thumb))
 
-            if info.get('thumbnail'):
-                cleaned = clean_thumbnail_url(info.get('thumbnail'))
-                if cleaned and cleaned not in all_thumbs: all_thumbs.append(cleaned)
+            if info.get('thumbnail') and info.get('thumbnail') not in all_thumbs:
+                all_thumbs.append(clean_thumbnail_url(info.get('thumbnail')))
 
             for t in info.get('thumbnails', []):
                 t_url = clean_thumbnail_url(t.get('url', ''))
-                if t_url and t_url not in all_thumbs: all_thumbs.append(t_url)
+                if t_url and t_url not in all_thumbs:
+                    all_thumbs.append(t_url)
 
             clean_thumbs = [t for t in all_thumbs if 'hash=' not in t and 'validto=' not in t and 'hdnea=' not in t and 'svg' not in t and 'logo.jpg' not in t]
-            thumbnail = clean_thumbs[0] if clean_thumbs else (all_thumbs[0] if all_thumbs else "")
-            thumbnails = clean_thumbs if clean_thumbs else all_thumbs
+            
+            if clean_thumbs:
+                thumbnail = clean_thumbs[0]
+                thumbnails = clean_thumbs
+            else:
+                thumbnail = all_thumbs[0] if all_thumbs else ""
+                thumbnails = all_thumbs
 
             qualities_dict = {}
+
             for f in info.get('formats', []):
                 f_url = f.get('url', '')
-                if not f_url or f.get('vcodec') == 'none': continue
-                f_url = clean_media_stream_url(f_url)
-
+                if not f_url: continue
+                if f.get('vcodec') == 'none': continue
+                
                 protocol = str(f.get('protocol', '')).lower()
                 ext = str(f.get('ext', '')).lower()
                 format_id = str(f.get('format_id', '')).lower()
@@ -936,7 +973,7 @@ def extract_with_ytdlp(url: str) -> dict:
 
                 is_hls = 'm3u8' in protocol or ext == 'm3u8' or '.m3u8' in f_url or 'hls' in format_id
                 height = f.get('height')
-
+                
                 if not height:
                     m = re.search(r'(\d{3,4})[pP]?', format_id + "-" + format_note + "-" + res_str)
                     if m: height = int(m.group(1))
@@ -965,7 +1002,8 @@ def extract_with_ytdlp(url: str) -> dict:
 
             qualities = list(qualities_dict.values())
             qualities.sort(key=lambda x: x['height'], reverse=True)
-            for q in qualities: q.pop('height', None)
+            for q in qualities:
+                q.pop('height', None)
 
             if not qualities:
                 last_error = "No valid streams found"
@@ -986,7 +1024,7 @@ def extract_with_ytdlp(url: str) -> dict:
                 "url": url,
                 "provider": provider
             }
-
+            
             if not is_pornhub: extraction_cache[url] = result
             return result
 
@@ -1007,7 +1045,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 @app.get("/api/extract")
 async def extract_endpoint(url: str):
     if not url: return JSONResponse({"status": "error", "error": "Missing URL"})
-    target_url = url.strip().strip('"\'')
+    target_url = url.strip()
     if "viewkey=" not in target_url and not any(d in target_url for d in ["xhamster.com", "xnxx.com", "xvideos.com", "redtube.com", "youporn.com", "ok.xxx", "pornhat.com"]):
         if len(target_url) in [13, 15, 16] and "." not in target_url:
              target_url = f"https://www.pornhub.com/view_video.php?viewkey={target_url}"
@@ -1019,16 +1057,13 @@ async def extract_endpoint(url: str):
 async def fallback_proxy_image(url: str):
     target = url.strip()
     if target.startswith('//'): target = "https:" + target
-
-    parsed_domain = re.search(r'https?://([^/]+)', target)
-    img_referer = f"https://{parsed_domain.group(1)}/" if parsed_domain else "https://www.google.com/"
-
+    
     headers = {
-        'User-Agent': COMMON_USER_AGENT,
-        'Referer': img_referer,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://www.youporn.com/',
         'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
     }
-
+    
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
@@ -1049,17 +1084,13 @@ async def fallback_proxy_image(url: str):
 
 @app.get("/proxy-m3u8")
 async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", request_host: str = ""):
-    target = clean_media_stream_url(url)
-    parsed_domain = re.search(r'https?://([^/]+)', target)
-    domain_str = parsed_domain.group(1) if parsed_domain else "ok.xxx"
-    stream_referer = f"https://{domain_str}/"
-
+    target = url.strip()
     headers = {
-        "User-Agent": COMMON_USER_AGENT,
-        "Referer": stream_referer,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
+        "Referer": "https://www.youporn.com/",
         "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
     }
-
+    
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
@@ -1069,7 +1100,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                     proto = request.headers.get("x-forwarded-proto", "https")
                     if not request_host:
                         request_host = request.headers.get("host", "")
-
+                    
                     lines = resp.text.split('\n')
                     rewritten = []
                     for line in lines:
@@ -1090,7 +1121,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                             next_endpoint = "/proxy-m3u8" if ".m3u8" in abs_uri else "/proxy-video"
                             new_uri = f"{proto}://{request_host}{next_endpoint}?url={quote(abs_uri)}&sig={sig}&exp={exp}&request_host={request_host}"
                             rewritten.append(new_uri)
-
+                            
                     return Response(content="\n".join(rewritten), media_type="application/vnd.apple.mpegurl", headers={
                         "Access-Control-Allow-Origin": "*",
                         "Cache-Control": "no-cache, no-store"
@@ -1101,47 +1132,20 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
 
 @app.get("/proxy-video")
 async def proxy_video(request: Request, url: str, sig: str = "", exp: str = "", request_host: str = ""):
-    target = clean_media_stream_url(url)
-    parsed_domain = re.search(r'https?://([^/]+)', target)
-    domain_str = parsed_domain.group(1) if parsed_domain else "ok.xxx"
-
-    id_match = re.search(r'/(\d{5,8})(?:_[a-zA-Z0-9]+)?\.mp4', target)
-    if not id_match:
-        id_match = re.search(r'/(\d{5,8})/', target)
-
-    if id_match and "ok.xxx" in target:
-        stream_referer = f"https://ok.xxx/video/{id_match.group(1)}/"
-    elif id_match and "pornhat.com" in target:
-        stream_referer = f"https://www.pornhat.com/video/{id_match.group(1)}/"
-    else:
-        stream_referer = f"https://{domain_str}/"
-
+    target = url.strip()
     headers = {
-        "User-Agent": COMMON_USER_AGENT,
-        "Referer": stream_referer,
-        "Origin": f"https://{domain_str}",
-        "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;",
-        "Sec-Fetch-Dest": "video",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "cross-site"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", 
+        "Referer": "https://www.youporn.com/",
+        "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
     }
-
     if "range" in request.headers:
         headers["Range"] = request.headers["range"]
-
+        
     for attempt in range(3):
         try:
             client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
             req = client.build_request("GET", target, headers=headers)
             resp = await client.send(req, stream=True)
-
-            if resp.status_code == 404:
-                alt_target = target[:-1] if target.endswith('/') else target + '/'
-                alt_req = client.build_request("GET", alt_target, headers=headers)
-                alt_resp = await client.send(alt_req, stream=True)
-                if alt_resp.status_code in [200, 206]:
-                    resp = alt_resp
-
             if resp.status_code in [200, 206]:
                 resp_headers = {
                     "Access-Control-Allow-Origin": "*",
@@ -1151,7 +1155,7 @@ async def proxy_video(request: Request, url: str, sig: str = "", exp: str = "", 
                 for k in ["Content-Length", "Content-Range"]:
                     if k in resp.headers:
                         resp_headers[k] = resp.headers[k]
-
+                        
                 async def stream_generator():
                     try:
                         async for chunk in resp.aiter_bytes(chunk_size=65536):
