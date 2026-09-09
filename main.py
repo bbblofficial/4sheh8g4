@@ -32,6 +32,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def clean_thumbnail_url(raw_url: str) -> str:
+    if not raw_url:
+        return ""
+    if ',' in raw_url and ('http://' in raw_url or 'https://' in raw_url):
+        parts = re.split(r',\s+', raw_url)
+        candidates = []
+        for p in parts:
+            url_part = p.strip().split(' ')[0]
+            if url_part.startswith('http'):
+                candidates.append(url_part)
+        if candidates:
+            raw_url = candidates[-1]
+    
+    raw_url = raw_url.strip()
+    if raw_url.startswith('//'):
+        raw_url = "https:" + raw_url
+    return raw_url
+
 def search_pornhub_with_ytdlp(q: str, page: int) -> list:
     videos = []
     search_term = f"phsearch48:{q}"
@@ -58,7 +76,7 @@ def search_pornhub_with_ytdlp(q: str, page: int) -> list:
                 videos.append({
                     "vkey": vkey,
                     "title": title,
-                    "thumbnail": entry.get('thumbnail', ''),
+                    "thumbnail": clean_thumbnail_url(entry.get('thumbnail', '')),
                     "url": url,
                     "provider": "pornhub"
                 })
@@ -92,7 +110,7 @@ def search_youporn_with_ytdlp(q: str, page: int) -> list:
                 videos.append({
                     "vkey": vkey,
                     "title": title,
-                    "thumbnail": entry.get('thumbnail', ''),
+                    "thumbnail": clean_thumbnail_url(entry.get('thumbnail', '')),
                     "url": url,
                     "provider": "youporn"
                 })
@@ -134,7 +152,7 @@ def search_xhamster_with_ytdlp(q: str, page: int) -> list:
                 videos.append({
                     "vkey": vkey,
                     "title": title,
-                    "thumbnail": thumb,
+                    "thumbnail": clean_thumbnail_url(thumb),
                     "url": url if url.startswith('http') else f"https://xhamster.com/videos/{vkey}",
                     "provider": "xhamster"
                 })
@@ -174,7 +192,7 @@ def search_redtube_with_ytdlp(q: str, page: int) -> list:
                 videos.append({
                     "vkey": vkey,
                     "title": title,
-                    "thumbnail": thumb,
+                    "thumbnail": clean_thumbnail_url(thumb),
                     "url": url if url.startswith('http') else f"https://www.redtube.com/{vkey}",
                     "provider": "redtube"
                 })
@@ -238,7 +256,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                             if img_tag:
                                 if not title or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title):
                                     title = img_tag.get('alt') or title
-                                thumb = (img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
+                                thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
                         else:
                             a_tag = item.select_one('a[href*="/watch/"]')
                             if not a_tag: continue
@@ -250,7 +268,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                             if img_tag:
                                 if not title or title == "Unknown Video" or title.isdigit() or re.match(r'^(?:ES|PT)?\d{1,2}:\d{2}', title):
                                     title = img_tag.get('alt') or title
-                                thumb = (img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
+                                thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or img_tag.get('data-poster') or "")
 
                         full_url = full_url.split('?')[0].rstrip('/')
                         if not full_url or full_url in seen: continue
@@ -298,7 +316,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         seen.add(full_url)
 
                         img_tag = item.select_one('img')
-                        thumb = img_tag.get('data-thumb_url') or img_tag.get('data-mediumthumb') or img_tag.get('data-image') or img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or "" if img_tag else ""
+                        thumb = clean_thumbnail_url(img_tag.get('data-thumb_url') or img_tag.get('data-mediumthumb') or img_tag.get('data-image') or img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or "") if img_tag else ""
 
                         videos.append({"vkey": vkey, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "pornhub"})
                         if len(videos) >= 48: break
@@ -331,25 +349,36 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if any(bad in title.lower() for bad in ['sponsor', 'promo', 'ad/']): continue
                         seen.add(full_url)
 
-                        # Bulletproof xHamster thumbnail extractor via regex (avoids comma truncation in srcset)
+                        # Bulletproof xHamster thumbnail extractor
                         thumb = ""
-                        item_html = str(item)
-                        matches = re.findall(r'https?://[^\s<>"\']+\.(?:xhcdn|phncdn)\.com[^\s<>"\']+\.(?:jpg|jpeg|png|webp)', item_html)
-                        for candidate in matches:
-                            if 'logo' not in candidate and 'svg' not in candidate and 'avatar' not in candidate and 'pixel' not in candidate:
-                                thumb = candidate
-                                break
+                        search_container = item if item.name != 'a' else a_tag.parent
+                        if search_container:
+                            for img in search_container.select('img'):
+                                for attr in ['data-srcset', 'srcset', 'data-src', 'data-lazy-src', 'data-original', 'data-thumb', 'data-image', 'src']:
+                                    val = img.get(attr, '')
+                                    if val and 'svg' not in val and 'logo' not in val:
+                                        cleaned = clean_thumbnail_url(val)
+                                        if cleaned.startswith('http'):
+                                            thumb = cleaned
+                                            break
+                                if thumb: break
+
+                            if not thumb:
+                                for source in search_container.select('source'):
+                                    val = source.get('srcset') or source.get('data-srcset') or ''
+                                    if val:
+                                        cleaned = clean_thumbnail_url(val)
+                                        if cleaned.startswith('http'):
+                                            thumb = cleaned
+                                            break
 
                         if not thumb:
-                            search_container = item if item.name != 'a' else a_tag.parent
-                            if search_container:
-                                img = search_container.select_one('img')
-                                if img:
-                                    for attr in ['data-src', 'data-lazy-src', 'data-original', 'data-thumb', 'data-image', 'src']:
-                                        val = img.get(attr, '')
-                                        if val and val.startswith('http') and 'svg' not in val and 'logo' not in val:
-                                            thumb = val.split(' ')[0]
-                                            break
+                            item_html = str(item)
+                            match_img = re.search(r'https?://[^\s<>"\']+\.(?:xhcdn|phncdn)\.com[^\s<>"\']+(?:\.jpg|\.jpeg|\.png|\.webp)', item_html)
+                            if match_img:
+                                candidate = match_img.group(0)
+                                if 'logo' not in candidate and 'svg' not in candidate and 'avatar' not in candidate:
+                                    thumb = candidate
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                         if len(videos) >= 48: break
@@ -384,9 +413,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         seen.add(full_url)
 
                         img_tag = item.select_one('img')
-                        thumb = ""
-                        if img_tag:
-                            thumb = (img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "")
+                        thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or img_tag.get('data-image') or img_tag.get('data-thumb') or "") if img_tag else ""
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "redtube"})
                         if len(videos) >= 48: break
@@ -408,7 +435,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         seen.add(full_url)
 
                         img_tag = item.select_one('img')
-                        thumb = img_tag.get('data-src') or img_tag.get('src') or "" if img_tag else ""
+                        thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or "") if img_tag else ""
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xnxx"})
                         if len(videos) >= 48: break
@@ -433,7 +460,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         seen.add(full_url)
 
                         img_tag = item.select_one('img')
-                        thumb = img_tag.get('data-src') or img_tag.get('src') or "" if img_tag else ""
+                        thumb = clean_thumbnail_url(img_tag.get('data-src') or img_tag.get('src') or "") if img_tag else ""
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xvideos"})
                         if len(videos) >= 48: break
@@ -497,12 +524,12 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
 
                 og_img = soup.find('meta', property='og:image')
                 if og_img and og_img.get('content'):
-                    poster_url = og_img.get('content').replace('&amp;', '&')
+                    poster_url = clean_thumbnail_url(og_img.get('content').replace('&amp;', '&'))
 
                 if not poster_url:
                     img_json = re.search(r'"image_url"\s*:\s*"([^"]+)"', resp.text)
                     if img_json:
-                        poster_url = img_json.group(1).replace('\\/', '/')
+                        poster_url = clean_thumbnail_url(img_json.group(1).replace('\\/', '/'))
 
                 view_match = re.search(r'([\d,\.]+)\s*(?:Views|views|Vistas|M views|k views)', resp.text)
                 if view_match:
@@ -589,14 +616,15 @@ def extract_with_ytdlp(url: str) -> dict:
             all_thumbs = []
             safe_thumb = extra_meta.get("thumbnail", "")
             if safe_thumb and not safe_thumb.startswith("data:image"):
-                all_thumbs.append(safe_thumb)
+                all_thumbs.append(clean_thumbnail_url(safe_thumb))
 
             if info.get('thumbnail') and info.get('thumbnail') not in all_thumbs:
-                all_thumbs.append(info.get('thumbnail'))
+                all_thumbs.append(clean_thumbnail_url(info.get('thumbnail')))
 
             for t in info.get('thumbnails', []):
-                if t.get('url') and t.get('url') not in all_thumbs:
-                    all_thumbs.append(t.get('url'))
+                t_url = clean_thumbnail_url(t.get('url', ''))
+                if t_url and t_url not in all_thumbs:
+                    all_thumbs.append(t_url)
 
             clean_thumbs = [t for t in all_thumbs if 'hash=' not in t and 'validto=' not in t and 'hdnea=' not in t and 'svg' not in t and 'logo.jpg' not in t]
             
