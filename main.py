@@ -63,40 +63,22 @@ def search_pornhub_with_ytdlp(q: str, page: int) -> list:
         logger.error(f"yt-dlp fallback search error for Pornhub: {e}")
     return videos
 
-def search_youporn_with_ytdlp(q: str, page: int) -> list:
+def search_with_ytdlp_fallback(provider: str, q: str, page: int) -> list:
     videos = []
-    search_term = f"ypsearch48:{q}"
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': 'in_playlist',
-        'skip_download': True,
-        'nocheckcertificate': True,
-        'age_limit': 21,
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(search_term, download=False)
-            entries = info.get('entries', []) if info else []
-            for entry in entries:
-                if not entry:
-                    continue
-                vkey = entry.get('id') or ''
-                url = entry.get('url') or f"https://www.youporn.com/watch/{vkey}"
-                videos.append({
-                    "vkey": vkey,
-                    "title": html_parser.unescape(entry.get('title', 'Unknown Video')),
-                    "thumbnail": entry.get('thumbnail', ''),
-                    "url": url,
-                    "provider": "youporn"
-                })
-    except Exception as e:
-        logger.error(f"yt-dlp fallback search error for YouPorn: {e}")
-    return videos
+    if provider == "youporn":
+        search_url = f"https://www.youporn.com/search/?query={quote(q)}&page={page}"
+    elif provider == "xhamster":
+        search_url = f"https://xhamster.com/search/{quote(q)}" if page <= 1 else f"https://xhamster.com/search/{quote(q)}/{page}"
+    elif provider == "redtube":
+        search_url = f"https://www.redtube.com/?search={quote(q)}" if page <= 1 else f"https://www.redtube.com/?search={quote(q)}&page={page}"
+    elif provider == "xnxx":
+        search_url = f"https://www.xnxx.com/search/{quote(q)}" if page <= 1 else f"https://www.xnxx.com/search/{quote(q)}/{page}"
+    elif provider == "xvideos":
+        p_val = page - 1 if page > 1 else 0
+        search_url = f"https://www.xvideos.com/?k={quote(q)}" if p_val == 0 else f"https://www.xvideos.com/?k={quote(q)}&p={p_val}"
+    else:
+        search_url = f"https://www.pornhub.com/video/search?search={quote(q)}&page={page}"
 
-def search_xhamster_with_ytdlp(q: str, page: int) -> list:
-    videos = []
-    search_url = f"https://xhamster.com/search/{quote(q)}" if page <= 1 else f"https://xhamster.com/search/{quote(q)}/{page}"
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -112,8 +94,8 @@ def search_xhamster_with_ytdlp(q: str, page: int) -> list:
             for entry in entries:
                 if not entry:
                     continue
-                url = entry.get('url', '')
-                vkey = entry.get('id', '')
+                vkey = entry.get('id') or ''
+                url = entry.get('url') or ''
                 if not vkey and url:
                     parts = [p for p in url.split('/') if p]
                     vkey = parts[-1] if parts else ""
@@ -123,53 +105,30 @@ def search_xhamster_with_ytdlp(q: str, page: int) -> list:
                 thumb = entry.get('thumbnail', '')
                 if not thumb and entry.get('thumbnails'):
                     thumb = entry.get('thumbnails')[0].get('url', '')
-                videos.append({
-                    "vkey": vkey,
-                    "title": title,
-                    "thumbnail": thumb,
-                    "url": url if url.startswith('http') else f"https://xhamster.com/videos/{vkey}",
-                    "provider": "xhamster"
-                })
-    except Exception as e:
-        logger.error(f"yt-dlp fallback search error for xHamster: {e}")
-    return videos
+                
+                if not url.startswith('http'):
+                    if provider == 'xhamster':
+                        url = f"https://xhamster.com/videos/{vkey}"
+                    elif provider == 'redtube':
+                        url = f"https://www.redtube.com/{vkey}"
+                    elif provider == 'xnxx':
+                        url = f"https://www.xnxx.com/{vkey}"
+                    elif provider == 'xvideos':
+                        url = f"https://www.xvideos.com/{vkey}/video_stream"
+                    elif provider == 'youporn':
+                        url = f"https://www.youporn.com/watch/{vkey}"
+                    else:
+                        url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
 
-def search_redtube_with_ytdlp(q: str, page: int) -> list:
-    videos = []
-    search_url = f"https://www.redtube.com/?search={quote(q)}" if page <= 1 else f"https://www.redtube.com/?search={quote(q)}&page={page}"
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': 'in_playlist',
-        'skip_download': True,
-        'nocheckcertificate': True,
-        'age_limit': 21,
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(search_url, download=False)
-            entries = info.get('entries', []) if info else []
-            for entry in entries:
-                if not entry:
-                    continue
-                url = entry.get('url', '')
-                vkey = entry.get('id', '')
-                if not vkey and url:
-                    parts = [p for p in url.split('/') if p]
-                    vkey = parts[-1] if parts else ""
-                if not vkey:
-                    continue
-                title = html_parser.unescape(entry.get('title', f"Video {vkey}"))
-                thumb = entry.get('thumbnail', '')
                 videos.append({
                     "vkey": vkey,
                     "title": title,
                     "thumbnail": thumb,
-                    "url": url if url.startswith('http') else f"https://www.redtube.com/{vkey}",
-                    "provider": "redtube"
+                    "url": url,
+                    "provider": provider
                 })
     except Exception as e:
-        logger.error(f"yt-dlp fallback search error for RedTube: {e}")
+        logger.error(f"yt-dlp fallback search error for {provider}: {e}")
     return videos
 
 def search_provider_robust(provider: str, q: str, page: int):
@@ -291,7 +250,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if len(videos) >= 48: break
 
                 elif provider == "xhamster":
-                    items = soup.select('div.video-thumb, div.thumb-list__item, div.video-container, div.cell, article, div.video-thumb-info, div[class*="video-thumb"]')
+                    items = soup.select('div.video-thumb, div.thumb-list__item, div.video-container, div.cell, article, div.video-thumb-info, div[class*="video-thumb"], div[class*="video-card"], a[href*="/videos/"]')
                     for item in items:
                         a_tag = item.select_one('a[href*="/videos/"], a[href*="/movie/"], a[href*="/pornstar/"]')
                         if not a_tag: continue
@@ -437,15 +396,11 @@ def search_provider_robust(provider: str, q: str, page: int):
             logger.error(f"Search provider {provider} attempt {attempt+1} error: {e}")
             time.sleep(1.0)
 
-    # Fallback to yt-dlp search if BeautifulSoup scraping fails or returns empty
+    # Automatic yt-dlp fallback if BeautifulSoup returns empty or gets blocked
     if provider == "pornhub":
         videos = search_pornhub_with_ytdlp(q, page)
-    elif provider == "youporn":
-        videos = search_youporn_with_ytdlp(q, page)
-    elif provider == "xhamster":
-        videos = search_xhamster_with_ytdlp(q, page)
-    elif provider == "redtube":
-        videos = search_redtube_with_ytdlp(q, page)
+    else:
+        videos = search_with_ytdlp_fallback(provider, q, page)
 
     search_cache[cache_key] = videos
     return videos
