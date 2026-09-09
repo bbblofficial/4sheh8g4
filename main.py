@@ -848,7 +848,6 @@ def extract_with_ytdlp(url: str) -> dict:
     elif "ok.xxx" in url: provider = "okxxx"
     elif "pornhat.com" in url: provider = "pornhat"
 
-    # DIRECT FAST-PATH: If it is an ok.xxx or pornhat link, skip yt-dlp completely!
     if provider in ["okxxx", "pornhat"]:
         res = extract_kvs_direct(url, provider)
         if res.get("status") == "success":
@@ -1146,9 +1145,10 @@ async def proxy_video(request: Request, url: str, sig: str = "", exp: str = "", 
             if resp.status_code in [200, 206]:
                 resp_headers = {
                     "Access-Control-Allow-Origin": "*",
-                    "Accept-Ranges": "bytes"
+                    "Accept-Ranges": "bytes",
+                    "Content-Type": "video/mp4"
                 }
-                for k in ["Content-Type", "Content-Length", "Content-Range"]:
+                for k in ["Content-Length", "Content-Range"]:
                     if k in resp.headers:
                         resp_headers[k] = resp.headers[k]
 
