@@ -149,11 +149,18 @@ def search_xhamster_with_ytdlp(q: str, page: int) -> list:
                 thumb = entry.get('thumbnail', '')
                 if not thumb and entry.get('thumbnails'):
                     thumb = entry.get('thumbnails')[0].get('url', '')
+                
+                final_url = url if url.startswith('http') else f"https://xhamster.com/videos/{vkey}"
+                cleaned_thumb = clean_thumbnail_url(thumb)
+                if not cleaned_thumb:
+                    meta = parse_metadata_fallback(final_url, "xhamster")
+                    cleaned_thumb = meta.get("thumbnail", "")
+
                 videos.append({
                     "vkey": vkey,
                     "title": title,
-                    "thumbnail": clean_thumbnail_url(thumb),
-                    "url": url if url.startswith('http') else f"https://xhamster.com/videos/{vkey}",
+                    "thumbnail": cleaned_thumb,
+                    "url": final_url,
                     "provider": "xhamster"
                 })
     except Exception as e:
@@ -349,7 +356,7 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if any(bad in title.lower() for bad in ['sponsor', 'promo', 'ad/']): continue
                         seen.add(full_url)
 
-                        # Ultra-robust xHamster thumbnail extractor
+                        # Ultra-robust xHamster thumbnail extractor with fallback to parse_metadata_fallback
                         thumb = ""
                         container = item if item.name != 'a' else (item.parent.parent if item.parent else item)
                         
@@ -371,6 +378,10 @@ def search_provider_robust(provider: str, q: str, page: int):
                                             thumb = cleaned
                                             break
                                 if thumb: break
+
+                        if not thumb:
+                            meta = parse_metadata_fallback(full_url, "xhamster")
+                            thumb = meta.get("thumbnail", "")
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                         if len(videos) >= 48: break
