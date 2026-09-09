@@ -55,8 +55,10 @@ def clean_media_stream_url(raw_url: str) -> str:
     if not raw_url:
         return ""
     raw_url = raw_url.strip().replace('\\/', '/')
-    # KVS mp4 trailing slash removal - prevents Nginx 404 directory lookup error
-    raw_url = re.sub(r'(\.mp4)/+$', r'\1', raw_url, flags=re.IGNORECASE)
+    # Strip trailing slashes directly following .mp4 or .m3u8 (prevents Nginx 404 directory errors)
+    raw_url = re.sub(r'(\.(?:mp4|m3u8|webm|mov|mkv))/+(?=$|\?)', r'\1', raw_url, flags=re.IGNORECASE)
+    if re.search(r'\.(?:mp4|m3u8|webm)/+$', raw_url, re.IGNORECASE):
+        raw_url = re.sub(r'/+$', '', raw_url)
     return raw_url
 
 def is_invalid_title(t: str) -> bool:
@@ -71,76 +73,162 @@ def is_invalid_title(t: str) -> bool:
         return True
     return False
 
-def scrape_direct_kvs_streams(url: str, referer: str) -> dict:
+def extract_kvs_direct(url: str, provider: str) -> dict:
+    base_domain = "https://ok.xxx" if "ok.xxx" in url else "https://www.pornhat.com"
+    referer = f"{base_domain}/"
     headers = {
         'User-Agent': COMMON_USER_AGENT,
         'Referer': referer,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
         'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
     }
-    result = {"qualities": [], "duration": 0, "view_count": 0, "title": "", "thumbnail": ""}
-    try:
-        r = requests.get(url, headers=headers, timeout=7)
-        if r.status_code == 200:
-            html_text = r.text
-            soup = BeautifulSoup(html_text, 'html.parser')
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=headers, timeout=5)
+            if r.status_code == 200:
+                html_text = r.text
+                soup = BeautifulSoup(html_text, 'html.parser')
 
-            # Extract duration if present
-            dur_match = re.search(r'(?:duration|video_duration)\s*:\s*[\'"]?(\d+)[\'"]?', html_text)
-            if dur_match:
-                result["duration"] = int(dur_match.group(1))
+                # Title
+                title = ""
+                og_title = soup.find('meta', property='og:title')
+                if og_title and og_title.get('content'):
+                    title = og_title.get('content').strip()
+                if not title or is_invalid_title(title):
+                    h1 = soup.find('h1')
+                    if h1:
+                        title = h1.get_text(strip=True)
+                if not title or is_invalid_title(title):
+                    title_tag = soup.find('title')
+                    if title_tag:
+                        title = title_tag.get_text(strip=True).split(' - ')[0].split(' | ')[0]
+                if is_invalid_title(title):
+                    title = "Video Stream"
 
-            # Extract views
-            views_match = re.search(r'([\d,\.]+)\s*(?:Views|views)', html_text)
-            if views_match:
-                clean_v = views_match.group(1).replace(',', '').replace('.', '')
-                if clean_v.isdigit():
-                    result["view_count"] = int(clean_v)
+                # Thumbnails
+                all_thumbs = []
+                og_img = soup.find('meta', property='og:image')
+                if og_img and og_img.get('content'):
+                    c = clean_thumbnail_url(og_img.get('content'))
+                    if c: all_thumbs.append(c)
 
-            matches = []
-            # Extract video formats defined in flashvars / inline scripts
-            for m in re.finditer(r'(?:video_url|video_alt_url\d*)\s*:\s*[\'"]([^\'"]+)[\'"]', html_text):
-                val = m.group(1).strip()
-                if val:
-                    matches.append(val)
+                prev_match = re.search(r'preview_url\s*:\s*[\'"]([^\'"]+)[\'"]', html_text)
+                if prev_match:
+                    c = clean_thumbnail_url(prev_match.group(1))
+                    if c and c not in all_thumbs: all_thumbs.append(c)
 
-            # Check direct video source tags
-            for v in soup.select('video source, video[src]'):
-                src = v.get('src', '')
-                if src and src.startswith('http'):
-                    matches.append(src)
+                for v in soup.select('video[poster], [data-poster], [data-webp], [data-original]'):
+                    for attr in ['poster', 'data-poster', 'data-webp', 'data-original']:
+                        val = v.get(attr, '')
+                        c = clean_thumbnail_url(val)
+                        if c and c not in all_thumbs: all_thumbs.append(c)
 
-            # JSON script variables fallback
-            if not matches:
-                json_matches = re.findall(r'[\'"](?:file|src|url)[\'"]\s*:\s*[\'"](https?://[^\'"]+\.(?:mp4|m3u8)[^\'"]*)[\'"]', html_text)
-                matches.extend(json_matches)
+                for img in soup.select('img[src*="contents"], img[data-src*="contents"], img[src*="screenshots"]'):
+                    for attr in ['src', 'data-src', 'data-original', 'data-webp']:
+                        val = img.get(attr, '')
+                        c = clean_thumbnail_url(val)
+                        if c and c not in all_thumbs: all_thumbs.append(c)
 
-            seen = set()
-            for raw_m in matches:
-                stream_url = clean_media_stream_url(raw_m)
-                if not stream_url.startswith('http') and stream_url.startswith('/'):
-                    domain = "https://ok.xxx" if "ok.xxx" in url else "https://www.pornhat.com"
-                    stream_url = domain + stream_url
+                thumbnail = all_thumbs[0] if all_thumbs else ""
 
-                if not stream_url.startswith('http') or stream_url in seen:
-                    continue
-                seen.add(stream_url)
+                # Duration
+                duration = 0
+                dur_m = re.search(r'(?:video_duration|duration)\s*:\s*[\'"]?(\d+)[\'"]?', html_text)
+                if dur_m:
+                    duration = int(dur_m.group(1))
+                if not duration:
+                    iso_dur = soup.find('meta', property=re.compile(r'duration', re.I)) or soup.find('meta', itemprop='duration')
+                    if iso_dur and iso_dur.get('content'):
+                        c = iso_dur.get('content').strip()
+                        if c.isdigit():
+                            duration = int(c)
+                        else:
+                            m = re.search(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', c)
+                            if m:
+                                duration = int(m.group(1) or 0)*3600 + int(m.group(2) or 0)*60 + int(m.group(3) or 0)
 
-                is_hls = '.m3u8' in stream_url
-                q_label = "720p"
-                res_m = re.search(r'(\d{3,4})[pP]', stream_url)
-                if res_m:
-                    q_label = f"{res_m.group(1)}p"
-                elif is_hls:
-                    q_label = "Auto"
+                # Views
+                view_count = 0
+                v_match = re.search(r'([\d,\.]+)\s*(?:Views|views)', html_text)
+                if v_match:
+                    raw_v = v_match.group(1).replace(',', '').replace('.', '')
+                    if raw_v.isdigit():
+                        view_count = int(raw_v)
 
-                result["qualities"].append({
-                    "quality": q_label,
-                    "url": stream_url,
-                    "type": "hls" if is_hls else "mp4"
-                })
-    except Exception as e:
-        logger.error(f"KVS Direct Scrape error for {url}: {e}")
-    return result
+                # Upload Date
+                upload_date = ""
+                date_tag = soup.find('meta', itemprop='uploadDate') or soup.find('meta', property='video:release_date')
+                if date_tag and date_tag.get('content'):
+                    upload_date = date_tag.get('content')[:10]
+                if not upload_date:
+                    dm = re.search(r'(\d{4}-\d{2}-\d{2})', html_text)
+                    if dm:
+                        upload_date = dm.group(1)
+
+                # Quality Streams
+                qualities_map = {}
+                matches = []
+                for m in re.finditer(r'(?:video_url|video_alt_url\d*)\s*:\s*[\'"]([^\'"]+)[\'"]', html_text):
+                    matches.append(m.group(1))
+
+                for v in soup.select('video source, video[src]'):
+                    src = v.get('src', '')
+                    if src: matches.append(src)
+
+                if not matches:
+                    matches = re.findall(r'[\'"](?:file|src|url)[\'"]\s*:\s*[\'"](https?://[^\'"]+\.(?:mp4|m3u8)[^\'"]*)[\'"]', html_text)
+
+                for raw_stream_url in matches:
+                    stream_url = clean_media_stream_url(raw_stream_url)
+                    if not stream_url.startswith('http') and stream_url.startswith('/'):
+                        stream_url = base_domain + stream_url
+                    if not stream_url.startswith('http'):
+                        continue
+
+                    is_hls = '.m3u8' in stream_url
+                    res_m = re.search(r'(\d{3,4})[pP]', stream_url)
+                    if res_m:
+                        q_label = f"{res_m.group(1)}p"
+                        height = int(res_m.group(1))
+                    elif is_hls:
+                        q_label = "Auto"
+                        height = 9999
+                    else:
+                        q_label = "720p"
+                        height = 720
+
+                    if q_label not in qualities_map:
+                        qualities_map[q_label] = {
+                            "quality": q_label,
+                            "url": stream_url,
+                            "type": "hls" if is_hls else "mp4",
+                            "height": height
+                        }
+
+                qual_list = list(qualities_map.values())
+                qual_list.sort(key=lambda x: x["height"], reverse=True)
+                for q in qual_list:
+                    q.pop("height", None)
+
+                if qual_list:
+                    return {
+                        "status": "success",
+                        "title": html_parser.unescape(title),
+                        "thumbnail": thumbnail,
+                        "thumbnails": all_thumbs if all_thumbs else ([thumbnail] if thumbnail else []),
+                        "duration": duration,
+                        "upload_date": upload_date,
+                        "view_count": view_count,
+                        "streams": {"qualities": qual_list},
+                        "url": url,
+                        "provider": provider
+                    }
+        except Exception as e:
+            logger.error(f"extract_kvs_direct error for {url}: {e}")
+            time.sleep(0.5)
+
+    return {"status": "error", "error": f"Failed to extract direct streams for {url}"}
 
 def search_pornhub_with_ytdlp(q: str, page: int) -> list:
     videos = []
@@ -375,7 +463,7 @@ def search_provider_robust(provider: str, q: str, page: int):
         'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
         'Sec-Ch-Ua-Mobile': '?0',
         'Sec-Ch-Ua-Platform': '"Windows"',
-        'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc; yp_access_confirmed=1; accessAgeConfirmed=1;'
+        'Cookie': 'has_accepted_cookie=1; age_verified=1; platform=pc;'
     }
 
     if provider == "youporn":
@@ -767,9 +855,14 @@ def extract_with_ytdlp(url: str) -> dict:
     elif "ok.xxx" in url: provider = "okxxx"
     elif "pornhat.com" in url: provider = "pornhat"
 
-    if "ok.xxx" in url: referer_url = "https://ok.xxx/"
-    elif "pornhat.com" in url: referer_url = "https://www.pornhat.com/"
-    elif "xhamster.com" in url: referer_url = "https://xhamster.com/"
+    # DIRECT FAST-PATH: If it is an ok.xxx or pornhat link, skip yt-dlp completely!
+    if provider in ["okxxx", "pornhat"]:
+        res = extract_kvs_direct(url, provider)
+        if res.get("status") == "success":
+            extraction_cache[url] = res
+            return res
+
+    if "xhamster.com" in url: referer_url = "https://xhamster.com/"
     else: referer_url = f"https://www.{provider}.com/"
 
     ydl_opts = {
@@ -882,16 +975,6 @@ def extract_with_ytdlp(url: str) -> dict:
             qualities.sort(key=lambda x: x['height'], reverse=True)
             for q in qualities: q.pop('height', None)
 
-            # Direct fallback for KVS sites (ok.xxx, pornhat, etc.)
-            if not qualities or provider in ["okxxx", "pornhat"]:
-                kvs_data = scrape_direct_kvs_streams(url, referer_url)
-                if kvs_data.get("qualities"):
-                    qualities = kvs_data["qualities"]
-                if kvs_data.get("duration") and not duration:
-                    duration = kvs_data["duration"]
-                if kvs_data.get("view_count") and not view_count:
-                    view_count = kvs_data["view_count"]
-
             if not qualities:
                 last_error = "No valid streams found"
                 if attempt < max_retries - 1:
@@ -932,7 +1015,7 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 @app.get("/api/extract")
 async def extract_endpoint(url: str):
     if not url: return JSONResponse({"status": "error", "error": "Missing URL"})
-    target_url = url.strip()
+    target_url = url.strip().strip('"\'')
     if "viewkey=" not in target_url and not any(d in target_url for d in ["xhamster.com", "xnxx.com", "xvideos.com", "redtube.com", "youporn.com", "ok.xxx", "pornhat.com"]):
         if len(target_url) in [13, 15, 16] and "." not in target_url:
              target_url = f"https://www.pornhub.com/view_video.php?viewkey={target_url}"
@@ -1030,7 +1113,6 @@ async def proxy_video(request: Request, url: str, sig: str = "", exp: str = "", 
     parsed_domain = re.search(r'https?://([^/]+)', target)
     domain_str = parsed_domain.group(1) if parsed_domain else "ok.xxx"
 
-    # Precise referer logic: construct the exact video page if a video ID is present in path
     id_match = re.search(r'/(\d{5,8})(?:_[a-zA-Z0-9]+)?\.mp4', target)
     if not id_match:
         id_match = re.search(r'/(\d{5,8})/', target)
@@ -1060,6 +1142,15 @@ async def proxy_video(request: Request, url: str, sig: str = "", exp: str = "", 
             client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
             req = client.build_request("GET", target, headers=headers)
             resp = await client.send(req, stream=True)
+
+            # Fallback Nginx retry: If target has or lacks slash, try the alternate pattern
+            if resp.status_code == 404:
+                alt_target = target[:-1] if target.endswith('/') else target + '/'
+                alt_req = client.build_request("GET", alt_target, headers=headers)
+                alt_resp = await client.send(alt_req, stream=True)
+                if alt_resp.status_code in [200, 206]:
+                    resp = alt_resp
+
             if resp.status_code in [200, 206]:
                 resp_headers = {
                     "Access-Control-Allow-Origin": "*",
