@@ -331,52 +331,25 @@ def search_provider_robust(provider: str, q: str, page: int):
                         if any(bad in title.lower() for bad in ['sponsor', 'promo', 'ad/']): continue
                         seen.add(full_url)
 
-                        # Ultra-robust xHamster thumbnail extractor
+                        # Bulletproof xHamster thumbnail extractor via regex (avoids comma truncation in srcset)
                         thumb = ""
-                        search_container = item if item.name != 'a' else a_tag.parent
-                        if search_container:
-                            # 1. Check img tags with priority for data-src, data-lazy, etc. (avoiding svg/placeholder src)
-                            for img in search_container.select('img'):
-                                for attr in ['data-src', 'data-lazy-src', 'data-original', 'data-thumb', 'data-image', 'srcset', 'data-srcset']:
-                                    val = img.get(attr, '')
-                                    if val:
-                                        if ',' in val:  # srcset format
-                                            val = val.split(',')[0].strip().split(' ')[0]
-                                        if val.startswith('http') and 'svg' not in val and 'logo' not in val:
-                                            thumb = val
-                                            break
-                                if not thumb:
-                                    src = img.get('src', '')
-                                    if src.startswith('http') and 'data:image' not in src and 'svg' not in src and 'logo' not in src:
-                                        thumb = src
-                                        break
-                                if thumb: break
+                        item_html = str(item)
+                        matches = re.findall(r'https?://[^\s<>"\']+\.(?:xhcdn|phncdn)\.com[^\s<>"\']+\.(?:jpg|jpeg|png|webp)', item_html)
+                        for candidate in matches:
+                            if 'logo' not in candidate and 'svg' not in candidate and 'avatar' not in candidate and 'pixel' not in candidate:
+                                thumb = candidate
+                                break
 
-                            # 2. Check source tags inside picture
-                            if not thumb:
-                                for source in search_container.select('source'):
-                                    srcset = source.get('srcset') or source.get('data-srcset') or ''
-                                    if srcset:
-                                        candidate = srcset.split(',')[0].strip().split(' ')[0]
-                                        if candidate.startswith('http'):
-                                            thumb = candidate
-                                            break
-
-                            # 3. Check data attributes on container
-                            if not thumb:
-                                for attr in ['data-image', 'data-poster', 'data-background', 'data-thumb', 'data-preview', 'data-src']:
-                                    val = search_container.get(attr, '')
-                                    if val and val.startswith('http') and 'svg' not in val:
-                                        thumb = val
-                                        break
-
-                        # 4. Regex fallback on the card HTML for any xhcdn.com image URL
                         if not thumb:
-                            match_img = re.search(r'https?://[^\s<>"\']+\.(?:xhcdn|phncdn)\.com[^\s<>"\']+\.(?:jpg|jpeg|png|webp)', str(item))
-                            if match_img:
-                                candidate = match_img.group(0)
-                                if 'logo' not in candidate and 'svg' not in candidate and 'avatar' not in candidate:
-                                    thumb = candidate
+                            search_container = item if item.name != 'a' else a_tag.parent
+                            if search_container:
+                                img = search_container.select_one('img')
+                                if img:
+                                    for attr in ['data-src', 'data-lazy-src', 'data-original', 'data-thumb', 'data-image', 'src']:
+                                        val = img.get(attr, '')
+                                        if val and val.startswith('http') and 'svg' not in val and 'logo' not in val:
+                                            thumb = val.split(' ')[0]
+                                            break
 
                         videos.append({"vkey": vid_id, "title": html_parser.unescape(title), "thumbnail": thumb, "url": full_url, "provider": "xhamster"})
                         if len(videos) >= 48: break
