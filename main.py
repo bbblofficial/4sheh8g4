@@ -11,7 +11,6 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
-from lxml import html as lxml_html
 from bs4 import BeautifulSoup
 import yt_dlp
 from cachetools import TTLCache
@@ -116,43 +115,42 @@ async def fetch_page_videos(provider: str, q: str, page: int, headers: dict) -> 
     soup = BeautifulSoup(html_text, 'html.parser')
 
     if provider == "pornhub":
-        items = soup.select('li.pcVideoListItem, li.videoblock, div.videoBox, ul.videos li, div.search-video-list li, li[data-video-vkey]')
+        items = soup.select('li.videoblock, li.pcVideoListItem, li.js-pop, li.videoBox, ul#videoSearchResult li, div.search-video-list li, li[data-video-vkey]')
         for item in items:
             vkey = item.get("data-video-vkey")
             a_tag = item.select_one('a[href*="viewkey="], a[href*="/view_video.php"], a[href*="/video/"]')
             full_url = ""
             if a_tag:
-                href = a_tag.get('href', '')
-                full_url = href if href.startswith('http') else f"https://www.pornhub.com{href}"
+                h = a_tag.get('href', '')
+                full_url = h if h.startswith('http') else f"https://www.pornhub.com{h}"
             
             if not vkey and full_url:
-                if 'viewkey=' in full_url:
+                if "viewkey=" in full_url:
                     try:
-                        vkey = full_url.split('viewkey=')[1].split('&')[0]
+                        vkey = full_url.split("viewkey=")[1].split("&")[0]
                     except:
                         pass
-                elif '/video/' in full_url:
+                elif "/video/" in full_url:
                     parts = [p for p in full_url.split('/') if p]
                     if parts:
                         vkey = parts[-1]
-            
+
             if not vkey or len(vkey) < 5:
                 continue
-            
+
             full_url = f"https://www.pornhub.com/view_video.php?viewkey={vkey}"
-            
             title_tag = item.select_one('.title a, a.title, span.title, img[alt], a[title]')
             title = ""
             if title_tag:
-                title = title_tag.get('title') or title_tag.get('alt') or title_tag.get_text(strip=True)
+                title = title_tag.get('alt') or title_tag.get('title') or title_tag.get_text(strip=True)
             if not title or title.isdigit() or 'pornhub' in title.lower():
                 title = f"Pornhub Video {vkey}"
-                
+
             img_tag = item.select_one('img')
             thumb = ""
             if img_tag:
                 thumb = (img_tag.get('data-thumb_url') or img_tag.get('data-mediumthumb') or img_tag.get('data-image') or img_tag.get('data-src') or img_tag.get('src') or img_tag.get('data-lazy-src') or "")
-                
+
             videos.append({
                 "vkey": vkey,
                 "title": html_parser.unescape(title),
