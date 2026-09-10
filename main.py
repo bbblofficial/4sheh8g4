@@ -755,7 +755,7 @@ def extract_with_ytdlp(url: str) -> dict:
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
-        'format': 'bestvideo+bestaudio/best',
+        'format': 'all',  # Extract all available formats and manifests
         'nocheckcertificate': True,
         'http_headers': get_dynamic_headers(url)
     }
@@ -766,8 +766,8 @@ def extract_with_ytdlp(url: str) -> dict:
             ydl_opts['proxy'] = proxy
         ydl_opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['android', 'ios', 'tv_embedded'],
-                'player_skip': ['webpage', 'configs'],
+                'player_client': ['android', 'ios', 'tv_embedded', 'web'],
+                'player_skip': ['configs'],
             }
         }
     else:
@@ -821,10 +821,14 @@ def extract_with_ytdlp(url: str) -> dict:
 
             qualities_dict = {}
 
+            # Parse ALL video formats (including adaptive DASH streams for 1080p, 720p, etc.)
             for f in info.get('formats', []):
                 f_url = f.get('url', '')
-                if not f_url: continue
-                if f.get('vcodec') == 'none': continue
+                if not f_url: 
+                    continue
+                # Skip audio-only streams
+                if f.get('vcodec') == 'none': 
+                    continue
 
                 protocol = str(f.get('protocol', '')).lower()
                 ext = str(f.get('ext', '')).lower()
@@ -837,25 +841,38 @@ def extract_with_ytdlp(url: str) -> dict:
 
                 if not height:
                     m = re.search(r'(\d{3,4})[pP]?', format_id + "-" + format_note + "-" + res_str)
-                    if m: height = int(m.group(1))
+                    if m: 
+                        height = int(m.group(1))
 
-                if height:
+                if height and height >= 144:
                     q_label = f"{height}p"
                 else:
                     if "auto" in format_note or "auto" in format_id or is_hls:
                         q_label = "Auto"
                         height = 0
-                    else: continue 
+                    else: 
+                        continue 
 
-                if is_hls or 'mp4' in f_url or ext == 'mp4' or protocol.startswith('http'):
-                    existing = qualities_dict.get(q_label)
-                    if not existing or (is_hls and existing['type'] == 'mp4') or (not is_hls and existing['type'] == 'hls' and not is_youtube):
-                        qualities_dict[q_label] = {
-                            "quality": q_label,
-                            "url": f_url,
-                            "type": "hls" if is_hls else "mp4",
-                            "height": height
-                        }
+                has_audio = f.get('acodec') is not None and f.get('acodec') != 'none'
+
+                current_entry = {
+                    "quality": q_label,
+                    "url": f_url,
+                    "type": "hls" if is_hls else "mp4",
+                    "has_audio": has_audio,
+                    "height": height
+                }
+
+                # Prioritize formats with audio, then newer/higher-bitrate streams
+                if q_label not in qualities_dict:
+                    qualities_dict[q_label] = current_entry
+                else:
+                    existing = qualities_dict[q_label]
+                    if not existing.get('has_audio') and has_audio:
+                        qualities_dict[q_label] = current_entry
+                    elif existing.get('has_audio') == has_audio:
+                        if is_hls and existing.get('type') != 'hls':
+                            qualities_dict[q_label] = current_entry
 
             if not is_youtube:
                 has_hls = any(q['type'] == 'hls' for q in qualities_dict.values())
@@ -907,7 +924,8 @@ async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub")
 
 @app.get("/api/extract")
 async def extract_endpoint(url: str):
-    if not url: return JSONResponse({"status": "error", "error": "Missing URL"})
+    if not url: 
+        return JSONResponse({"status": "error", "error": "Missing URL"})
     target_url = url.strip()
     
     yt_match = re.search(r'(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|shorts\/|live\/)([A-Za-z0-9_-]{11})', target_url)
@@ -926,7 +944,8 @@ async def extract_endpoint(url: str):
 @app.get("/proxy-image")
 async def fallback_proxy_image(url: str):
     target = url.strip()
-    if target.startswith('//'): target = "https:" + target
+    if target.startswith('//'): 
+        target = "https:" + target
 
     headers = get_dynamic_headers(target)
 
@@ -970,7 +989,8 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                     rewritten = []
                     for line in lines:
                         line = line.strip()
-                        if not line: continue
+                        if not line: 
+                            continue
                         if line.startswith('#'):
                             if 'URI=' in line:
                                 match = re.search(r'URI="([^"]+)"', line)
