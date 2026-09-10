@@ -3,6 +3,7 @@ import time
 import asyncio
 import logging
 import re
+import json
 from urllib.parse import quote, unquote, urlparse
 import html as html_parser
 from concurrent.futures import ThreadPoolExecutor
@@ -380,6 +381,7 @@ def search_redtube_with_ytdlp(q: str, page: int) -> list:
         logger.error(f"yt-dlp fallback search error for RedTube: {e}")
     return videos
 
+# استخراج حرفه‌ای متادیتا با پشتیبانی اختصاصی از ساختار جدید JSON-LD پورن‌هاب
 def parse_metadata_fallback(url: str, provider: str) -> dict:
     if provider == "youtube":
         return {"view_count": 0, "upload_date": "", "thumbnail": "", "title": ""}
@@ -399,7 +401,7 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
     url = re.sub(r'https?://[a-zA-Z0-9-]+\.' + provider + r'\.com', base_domain, url)
     headers = get_dynamic_headers(url)
     try:
-        resp = requests.get(url, headers=headers, timeout=3.5)
+        resp = requests.get(url, headers=headers, timeout=5.0)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             view_count = 0
@@ -407,17 +409,45 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
             poster_url = ""
             scraped_title = ""
 
+            # ۱. بررسی ساختار جدید پورن‌هاب (JSON-LD Schema)
+            for script_tag in soup.find_all('script', type='application/ld+json'):
+                try:
+                    ld_data = json.loads(script_tag.string or '{}')
+                    if isinstance(ld_data, dict) and ld_data.get('@type') == 'VideoObject':
+                        if not upload_date and ld_data.get('uploadDate'):
+                            upload_date = str(ld_data.get('uploadDate')).split('T')[0]
+                        if not scraped_title and ld_data.get('name'):
+                            scraped_title = ld_data.get('name').strip()
+                        if not poster_url and ld_data.get('thumbnailUrl'):
+                            t_url = ld_data.get('thumbnailUrl')
+                            poster_url = t_url[0] if isinstance(t_url, list) else t_url
+
+                        # استخراج تعداد بازدید دقیق از InteractionCounter
+                        interactions = ld_data.get('interactionStatistic', [])
+                        if isinstance(interactions, dict):
+                            interactions = [interactions]
+                        for inter in interactions:
+                            if inter.get('userInteractionCount') is not None:
+                                try:
+                                    view_count = int(inter.get('userInteractionCount'))
+                                    break
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+
+            # ۲. بررسی متاتگ‌های استاندارد OpenGraph
             og_title = soup.find('meta', property='og:title')
-            if og_title and og_title.get('content'):
+            if not scraped_title and og_title and og_title.get('content'):
                 scraped_title = og_title.get('content').replace('&amp;', '&').strip()
 
             if not scraped_title:
                 title_tag = soup.find('title')
                 if title_tag:
-                    scraped_title = title_tag.get_text().replace('&amp;', '&').split('- RedTube')[0].split('- YouPorn')[0].split('- xHamster')[0].strip()
+                    scraped_title = title_tag.get_text().replace('&amp;', '&').split('- RedTube')[0].split('- YouPorn')[0].split('- xHamster')[0].split('- Pornhub')[0].strip()
 
             og_img = soup.find('meta', property='og:image')
-            if og_img and og_img.get('content'):
+            if not poster_url and og_img and og_img.get('content'):
                 poster_url = clean_thumbnail_url(og_img.get('content').replace('&amp;', '&'))
 
             if not poster_url:
@@ -425,19 +455,31 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                 if img_json:
                     poster_url = clean_thumbnail_url(img_json.group(1).replace('\\/', '/'))
 
-            view_match = re.search(r'([\d,\.]+)\s*(?:Views|views|Vistas|M views|k views)', resp.text)
-            if view_match:
-                raw_views = view_match.group(1).replace(',', '').replace('.', '')
-                if 'k' in view_match.group(0).lower():
-                    view_count = int(float(raw_views.replace('k', '')) * 1000)
-                elif 'm' in view_match.group(0).lower():
-                    view_count = int(float(raw_views.replace('m', '')) * 1000000)
-                else:
-                    view_count = int(raw_views) if raw_views.isdigit() else 0
+            # ۳. استخراج ویو از متن صفحه در صورت عدم وجود در JSON-LD
+            if view_count == 0:
+                # پورن‌هاب معمولاً در تگ span کلاس count یا viewcount دارد
+                view_tag = soup.select_one('span.count, .views .count, .viewcount, span[class*="count"]')
+                if view_tag:
+                    raw_num = re.sub(r'[^\d]', '', view_tag.get_text())
+                    if raw_num.isdigit():
+                        view_count = int(raw_num)
 
-            date_match = re.search(r'(\d{4}-\d{2}-\d{2})|(\d{1,2}\s+[a-zA-Z]+\s+\d{4})', resp.text)
-            if date_match:
-                upload_date = date_match.group(0)
+            if view_count == 0:
+                view_match = re.search(r'([\d,\.]+)\s*(?:Views|views|Vistas|M views|k views)', resp.text)
+                if view_match:
+                    raw_views = view_match.group(1).replace(',', '').replace('.', '')
+                    if 'k' in view_match.group(0).lower():
+                        view_count = int(float(raw_views.replace('k', '')) * 1000)
+                    elif 'm' in view_match.group(0).lower():
+                        view_count = int(float(raw_views.replace('m', '')) * 1000000)
+                    else:
+                        view_count = int(raw_views) if raw_views.isdigit() else 0
+
+            # ۴. استخراج تاریخ از متن صفحه
+            if not upload_date:
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})|(\d{1,2}\s+[a-zA-Z]+\s+\d{4})', resp.text)
+                if date_match:
+                    upload_date = date_match.group(0)
 
             return {"view_count": view_count, "upload_date": upload_date, "thumbnail": poster_url, "title": scraped_title}
     except Exception:
@@ -777,7 +819,7 @@ def search_provider_robust(provider: str, q: str, page: int):
     search_cache[cache_key] = videos
     return videos
 
-# فال‌بک اختصاصی پورن‌هاب در صورت دریافت خطای 410 از yt-dlp
+# فال‌بک مستقیم و کامل پورن‌هاب با استخراج دقیق تعداد بازدید و تاریخ آپلود
 def extract_pornhub_direct_fallback(url: str) -> dict | None:
     try:
         headers = get_dynamic_headers(url)
@@ -790,7 +832,6 @@ def extract_pornhub_direct_fallback(url: str) -> dict | None:
         if not flashvars_match:
             return None
 
-        import json
         f_data = json.loads(flashvars_match.group(1))
         media_defs = f_data.get('mediaDefinitions', [])
 
@@ -814,7 +855,6 @@ def extract_pornhub_direct_fallback(url: str) -> dict | None:
         if not qualities:
             return None
 
-        # فیلتر کیفیت‌های HLS در صورت وجود
         has_hls = any(q['type'] == 'hls' for q in qualities)
         if has_hls:
             qualities = [q for q in qualities if q['type'] == 'hls']
@@ -822,14 +862,18 @@ def extract_pornhub_direct_fallback(url: str) -> dict | None:
         meta = parse_metadata_fallback(url, "pornhub")
         title = f_data.get('video_title') or meta.get('title') or "Pornhub Video"
 
+        # خواندن بازدید و تاریخ استخراج شده از JSON-LD
+        views = meta.get('view_count', 0)
+        upload_date = meta.get('upload_date', '')
+
         return {
             "status": "success",
             "title": html_parser.unescape(title),
             "thumbnail": clean_thumbnail_url(f_data.get('image_url') or meta.get('thumbnail', '')),
             "thumbnails": [clean_thumbnail_url(f_data.get('image_url') or meta.get('thumbnail', ''))],
             "duration": int(f_data.get('video_duration', 0)),
-            "upload_date": meta.get('upload_date', ''),
-            "view_count": meta.get('view_count', 0),
+            "upload_date": upload_date,
+            "view_count": views,
             "streams": {"qualities": qualities},
             "url": url,
             "provider": "pornhub"
@@ -892,14 +936,16 @@ def extract_with_ytdlp(url: str) -> dict:
             upload_date = info.get('upload_date', '') 
             view_count = info.get('view_count', 0)
 
+            # استخراج متادیتا برای تمامی سرویس‌ها از جمله پورن‌هاب در صورت کمبود اطلاعات
             extra_meta = parse_metadata_fallback(url, provider) if not is_youtube else {}
 
-            if not is_pornhub and not is_youtube and (not title or is_invalid_title(title) or (len(title) <= 8 and title.isalnum())):
+            if not is_youtube and (not title or is_invalid_title(title) or (len(title) <= 8 and title.isalnum())):
                 if extra_meta.get("title") and not is_invalid_title(extra_meta.get("title")):
                     title = extra_meta.get("title")
             if not title or is_invalid_title(title):
                 title = "Unknown Video"
 
+            # اصلاح کلیدی: جایگزین کردن ویو و تاریخ از متادیتا حتی اگر پورن‌هاب باشد
             view_count = view_count or extra_meta.get("view_count", 0)
             upload_date = upload_date or extra_meta.get("upload_date", "")
 
@@ -997,7 +1043,6 @@ def extract_with_ytdlp(url: str) -> dict:
 
         except Exception as e:
             last_error = str(e)
-            # اگر خطای 410 روی پورن‌هاب رخ داد، بلافاصله فال‌بک مستقیم را اجرا کن
             if is_pornhub and ("410" in last_error or "Gone" in last_error):
                 direct_res = extract_pornhub_direct_fallback(url)
                 if direct_res:
