@@ -126,22 +126,26 @@ def is_invalid_title(t: str) -> bool:
     if re.search(r'\d{1,2}:\d{2}', t_clean) and len(t_clean) <= 12:
         return True
     return False
-
 def search_youtube_with_ytdlp(q: str, page: int) -> list:
     videos = []
-    search_term = f"ytsearch48:{q}"
+    # افزودن فاصله بعد از ytsearch و تعیین کلاینت‌های پایدار برای مرحله سرچ
+    search_term = f"ytsearch48: {q.strip()}"
+    
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
-        'extract_flat': 'in_playlist',
+        'extract_flat': True,
         'skip_download': True,
         'nocheckcertificate': True,
+        'ignoreerrors': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'tv_embedded'],
+                'player_client': ['web', 'android'],
+                'player_skip': ['configs', 'webpage'],
             }
         }
     }
+    
     proxy = get_warp_proxy()
     if proxy:
         ydl_opts['proxy'] = proxy
@@ -150,18 +154,28 @@ def search_youtube_with_ytdlp(q: str, page: int) -> list:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(search_term, download=False)
             entries = info.get('entries', []) if info else []
+            
             for entry in entries:
                 if not entry:
                     continue
+                
                 vkey = entry.get('id') or ''
+                if not vkey:
+                    continue
+                    
                 url = entry.get('url') or f"https://www.youtube.com/watch?v={vkey}"
-                title = html_parser.unescape(entry.get('title', 'Unknown Video'))
-                if is_invalid_title(title):
+                title = html_parser.unescape(entry.get('title', ''))
+                
+                if not title or is_invalid_title(title):
                     continue
 
                 thumb = entry.get('thumbnail', '')
                 if not thumb and entry.get('thumbnails'):
                     thumb = entry.get('thumbnails')[-1].get('url', '')
+
+                # اگر تامبنیل وجود نداشت از فرمت استاندارد یوتیوب استفاده می‌شود
+                if not thumb:
+                    thumb = f"https://i.ytimg.com/vi/{vkey}/hqdefault.jpg"
 
                 videos.append({
                     "vkey": vkey,
@@ -174,6 +188,7 @@ def search_youtube_with_ytdlp(q: str, page: int) -> list:
                 })
     except Exception as e:
         logger.error(f"yt-dlp search error for YouTube: {e}")
+        
     return videos
 
 def search_pornhub_with_ytdlp(q: str, page: int) -> list:
