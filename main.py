@@ -23,7 +23,7 @@ extraction_cache = TTLCache(maxsize=2000, ttl=7200)
 search_cache = TTLCache(maxsize=1000, ttl=1800)
 thread_pool = ThreadPoolExecutor(max_workers=50)
 
-# WARP proxy: STRICTLY reserved for YouTube ONLY
+# پراکسی وارپ صرفاً برای یوتیوب
 WARP_PROXY = os.getenv("WARP_PROXY", "socks5://127.0.0.1:40000")
 
 app = FastAPI(title="Media Extraction Engine")
@@ -35,30 +35,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def get_warp_proxy() -> str | None:
-    return WARP_PROXY if WARP_PROXY else None
-
 def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     target_lower = target.lower()
-    
     if "youtube.com" in target_lower or "googlevideo.com" in target_lower or "youtu.be" in target_lower:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            "Referer": "https://www.youtube.com/",
-            "Origin": "https://www.youtube.com"
-        }
-    elif "pornhub.com" in target_lower or "phncdn.com" in target_lower:
-        ref = "https://www.pornhub.com/"
+        ref = "https://www.youtube.com/"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
-            "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc; bs=1; accessAgeDisclaimerPH=1;"
         }
     elif "xhamster" in target_lower or "xhcdn" in target_lower:
         ref = "https://xhamster.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -66,7 +55,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     elif "xnxx" in target_lower:
         ref = "https://www.xnxx.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -74,7 +63,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     elif "xvideos" in target_lower:
         ref = "https://www.xvideos.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -82,7 +71,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     elif "redtube" in target_lower:
         ref = "https://www.redtube.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -90,7 +79,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     elif "youporn" in target_lower:
         ref = "https://www.youporn.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -98,12 +87,12 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     else:
         ref = "https://www.pornhub.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
         }
-
+        
     if request_headers and "range" in request_headers:
         headers["Range"] = request_headers["range"]
     return headers
@@ -132,17 +121,15 @@ def is_invalid_title(t: str) -> bool:
     t_clean = t.strip()
     if t_clean.isdigit() or len(t_clean) <= 2:
         return True
-    if re.search(r'^\d{1,2}:\d{2}$', t_clean):
+    if re.search(r'\d{1,2}:\d{2}', t_clean) and len(t_clean) <= 12:
         return True
     return False
 
-# ----------------- YouTube InnerTube Search (via WARP) -----------------
-def search_youtube_innertube(q: str, page: int = 1) -> list:
+# سرچ اختصاصی و ضد تحریم یوتیوب بدون دستکاری سایر سرویس‌ها
+def search_youtube_innertube(q: str) -> list:
     session = requests.Session()
-    # ONLY YouTube uses WARP
-    proxy = get_warp_proxy()
-    if proxy:
-        session.proxies = {"http": proxy, "https": proxy}
+    if WARP_PROXY:
+        session.proxies = {"http": WARP_PROXY, "https": WARP_PROXY}
 
     api_url = "https://www.youtube.com/youtubei/v1/search"
     headers = {
@@ -152,7 +139,6 @@ def search_youtube_innertube(q: str, page: int = 1) -> list:
         "X-YouTube-Client-Name": "1",
         "X-YouTube-Client-Version": "2.20240901.01.00",
     }
-
     payload = {
         "context": {
             "client": {
@@ -164,13 +150,10 @@ def search_youtube_innertube(q: str, page: int = 1) -> list:
         },
         "query": q
     }
-
     try:
         resp = session.post(api_url, json=payload, headers=headers, timeout=12)
         if resp.status_code != 200:
-            logger.error(f"YouTube InnerTube status {resp.status_code}")
             return []
-
         data = resp.json()
         videos = []
 
@@ -214,7 +197,6 @@ def search_youtube_innertube(q: str, page: int = 1) -> list:
                                 "uploader": uploader,
                                 "provider": "youtube"
                             })
-
                 for val in node.values():
                     walk(val)
             elif isinstance(node, list):
@@ -222,21 +204,17 @@ def search_youtube_innertube(q: str, page: int = 1) -> list:
                     walk(item)
 
         walk(data)
-
         seen = set()
         deduped = []
         for v in videos:
             if v["vkey"] not in seen:
                 seen.add(v["vkey"])
                 deduped.append(v)
-
         return deduped[:48]
-
     except Exception as e:
-        logger.error(f"YouTube InnerTube search error: {e}")
+        logger.error(f"InnerTube search error: {e}")
         return []
 
-# ----------------- Adult Providers (Direct / NO WARP) -----------------
 def search_pornhub_with_ytdlp(q: str, page: int) -> list:
     videos = []
     search_term = f"phsearch48:{q}"
@@ -247,7 +225,6 @@ def search_pornhub_with_ytdlp(q: str, page: int) -> list:
         'skip_download': True,
         'nocheckcertificate': True,
         'age_limit': 21,
-        'http_headers': get_dynamic_headers("https://www.pornhub.com/")
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -399,7 +376,7 @@ def search_redtube_with_ytdlp(q: str, page: int) -> list:
 def parse_metadata_fallback(url: str, provider: str) -> dict:
     if provider == "youtube":
         return {"view_count": 0, "upload_date": "", "thumbnail": "", "title": ""}
-
+        
     base_domain = "https://www.pornhub.com"
     if "xhamster.com" in url:
         base_domain = "https://xhamster.com"
@@ -415,8 +392,7 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
     url = re.sub(r'https?://[a-zA-Z0-9-]+\.' + provider + r'\.com', base_domain, url)
     headers = get_dynamic_headers(url)
     try:
-        # Normal direct request, NO proxy
-        resp = requests.get(url, headers=headers, timeout=4.0)
+        resp = requests.get(url, headers=headers, timeout=3.5)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             view_count = 0
@@ -467,7 +443,7 @@ def search_provider_robust(provider: str, q: str, page: int):
         return search_cache[cache_key]
 
     if provider == "youtube":
-        videos = search_youtube_innertube(q, page)
+        videos = search_youtube_innertube(q)
         if videos:
             search_cache[cache_key] = videos
         return videos
@@ -492,7 +468,6 @@ def search_provider_robust(provider: str, q: str, page: int):
 
     for attempt in range(3):
         try:
-            # DIRECT request: NO WARP PROXY FOR ADULT SITES
             resp = requests.get(search_url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
@@ -795,12 +770,11 @@ def search_provider_robust(provider: str, q: str, page: int):
     search_cache[cache_key] = videos
     return videos
 
-# ----------------- Video Extraction Pipeline -----------------
 def extract_with_ytdlp(url: str) -> dict:
     is_pornhub = "pornhub.com" in url
     is_youtube = any(y in url.lower() for y in ["youtube.com", "youtu.be"])
 
-    if not is_pornhub and url in extraction_cache:
+    if not is_pornhub and not is_youtube and url in extraction_cache:
         return extraction_cache[url]
 
     provider = "pornhub"
@@ -817,30 +791,26 @@ def extract_with_ytdlp(url: str) -> dict:
     elif "youporn.com" in url:
         provider = "youporn"
 
-    # Base options without any proxy
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
+        'format': 'bestvideo+bestaudio/best',
         'nocheckcertificate': True,
         'http_headers': get_dynamic_headers(url)
     }
 
+    # وارپ و کلاینت ضد-ربات اندروید صرفاً برای یوتیوب
     if is_youtube:
-        # EXCLUSIVELY assign Cloudflare WARP proxy to YouTube
-        proxy = get_warp_proxy()
-        if proxy:
-            ydl_opts['proxy'] = proxy
-
-        # YouTube Anti-Bot configuration
+        if WARP_PROXY:
+            ydl_opts['proxy'] = WARP_PROXY
         ydl_opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['android_creator', 'android', 'ios'],
+                'player_client': ['android_creator', 'ios'],
                 'player_skip': ['webpage', 'configs', 'js'],
             }
         }
     else:
-        # Adult providers use DEFAULT connection (NO WARP PROXY)
         ydl_opts['age_limit'] = 21
 
     max_retries = 3
@@ -891,13 +861,10 @@ def extract_with_ytdlp(url: str) -> dict:
 
             qualities_dict = {}
 
-            # Gather all video resolutions
             for f in info.get('formats', []):
                 f_url = f.get('url', '')
-                if not f_url: 
-                    continue
-                if f.get('vcodec') == 'none': 
-                    continue
+                if not f_url: continue
+                if f.get('vcodec') == 'none': continue
 
                 protocol = str(f.get('protocol', '')).lower()
                 ext = str(f.get('ext', '')).lower()
@@ -910,42 +877,29 @@ def extract_with_ytdlp(url: str) -> dict:
 
                 if not height:
                     m = re.search(r'(\d{3,4})[pP]?', format_id + "-" + format_note + "-" + res_str)
-                    if m: 
-                        height = int(m.group(1))
+                    if m: height = int(m.group(1))
 
-                if height and height >= 144:
+                if height:
                     q_label = f"{height}p"
                 else:
                     if "auto" in format_note or "auto" in format_id or is_hls:
                         q_label = "Auto"
                         height = 0
-                    else: 
-                        continue 
+                    else: continue 
 
-                has_audio = f.get('acodec') is not None and f.get('acodec') != 'none'
+                if is_hls or 'mp4' in f_url or ext == 'mp4' or protocol.startswith('http'):
+                    existing = qualities_dict.get(q_label)
+                    if not existing or (is_hls and existing['type'] == 'mp4'):
+                        qualities_dict[q_label] = {
+                            "quality": q_label,
+                            "url": f_url,
+                            "type": "hls" if is_hls else "mp4",
+                            "height": height
+                        }
 
-                current_entry = {
-                    "quality": q_label,
-                    "url": f_url,
-                    "type": "hls" if is_hls else "mp4",
-                    "has_audio": has_audio,
-                    "height": height
-                }
-
-                if q_label not in qualities_dict:
-                    qualities_dict[q_label] = current_entry
-                else:
-                    existing = qualities_dict[q_label]
-                    if not existing.get('has_audio') and has_audio:
-                        qualities_dict[q_label] = current_entry
-                    elif existing.get('has_audio') == has_audio:
-                        if is_hls and existing.get('type') != 'hls':
-                            qualities_dict[q_label] = current_entry
-
-            if not is_youtube:
-                has_hls = any(q['type'] == 'hls' for q in qualities_dict.values())
-                if has_hls:
-                    qualities_dict = {k: v for k, v in qualities_dict.items() if v['type'] == 'hls'}
+            has_hls = any(q['type'] == 'hls' for q in qualities_dict.values())
+            if has_hls and not is_youtube:
+                qualities_dict = {k: v for k, v in qualities_dict.items() if v['type'] == 'hls'}
 
             qualities = list(qualities_dict.values())
             qualities.sort(key=lambda x: x['height'], reverse=True)
@@ -972,41 +926,28 @@ def extract_with_ytdlp(url: str) -> dict:
                 "provider": provider
             }
 
-            if not is_pornhub: 
-                extraction_cache[url] = result
+            if not is_pornhub: extraction_cache[url] = result
             return result
 
         except Exception as e:
-            err_str = str(e)
-            last_error = err_str
-
-            # Check for HTTP 410 Gone (video deleted on host)
-            if "410" in err_str or "Gone" in err_str:
-                return {
-                    "status": "error",
-                    "error": "This video has been deleted or removed by the host (HTTP 410: Gone).",
-                    "url": url
-                }
-
+            last_error = str(e)
             if attempt < max_retries - 1:
                 time.sleep(1.0)
                 continue
 
     return {"status": "error", "error": f"Failed after {max_retries} retries: {last_error}", "url": url}
 
-# ----------------- Fast Endpoints -----------------
 @app.get("/api/explore")
-async def explore(q: str = "dewier", page: int = 1, provider: str = "youtube"):
+async def explore(q: str = "brazzers", page: int = 1, provider: str = "pornhub"):
     loop = asyncio.get_running_loop()
     res = await loop.run_in_executor(thread_pool, search_provider_robust, provider.lower(), q, page)
     return JSONResponse(res)
 
 @app.get("/api/extract")
 async def extract_endpoint(url: str):
-    if not url: 
-        return JSONResponse({"status": "error", "error": "Missing URL"})
+    if not url: return JSONResponse({"status": "error", "error": "Missing URL"})
     target_url = url.strip()
-    
+
     yt_match = re.search(r'(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|shorts\/|live\/)([A-Za-z0-9_-]{11})', target_url)
     if yt_match:
         target_url = f"https://www.youtube.com/watch?v={yt_match.group(1)}"
@@ -1023,8 +964,7 @@ async def extract_endpoint(url: str):
 @app.get("/proxy-image")
 async def fallback_proxy_image(url: str):
     target = url.strip()
-    if target.startswith('//'): 
-        target = "https:" + target
+    if target.startswith('//'): target = "https:" + target
 
     headers = get_dynamic_headers(target)
 
@@ -1068,8 +1008,7 @@ async def proxy_m3u8(request: Request, url: str, sig: str = "", exp: str = "", r
                     rewritten = []
                     for line in lines:
                         line = line.strip()
-                        if not line: 
-                            continue
+                        if not line: continue
                         if line.startswith('#'):
                             if 'URI=' in line:
                                 match = re.search(r'URI="([^"]+)"', line)
@@ -1112,7 +1051,7 @@ async def proxy_video(request: Request, url: str, sig: str = "", exp: str = "", 
                 resp_headers = {
                     "Access-Control-Allow-Origin": "*",
                     "Accept-Ranges": "bytes",
-                    "Content-Type": resp.headers.get("Content-Type", "video/mp4")
+                    "Content-Type": "video/mp4"
                 }
                 for k in ["Content-Type", "Content-Length", "Content-Range"]:
                     if k in resp.headers and resp.headers[k]:
@@ -1137,20 +1076,4 @@ async def proxy_video(request: Request, url: str, sig: str = "", exp: str = "", 
 
 @app.get("/")
 def health():
-    return {
-        "status": "Online",
-        "engine": "Fast Edge Extraction Engine",
-        "supported_providers": ["youtube", "pornhub", "xhamster", "youporn", "redtube", "xnxx", "xvideos"],
-        "warp_proxy": WARP_PROXY
-    }
-
-if __name__ == "__main__":
-    import uvicorn
-    raw_port = os.getenv("PORT", "8080").strip()
-    try:
-        bind_port = int(re.sub(r"[^0-9]", "", raw_port))
-    except Exception:
-        bind_port = 8080
-
-    logger.info(f"[*] Starting Uvicorn on 0.0.0.0:{bind_port}")
-    uvicorn.run("main:app", host="0.0.0.0", port=bind_port)
+    return {"status": "Online", "engine": "Fast Edge Extraction Engine"}
