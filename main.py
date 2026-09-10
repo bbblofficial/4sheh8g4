@@ -24,7 +24,7 @@ extraction_cache = TTLCache(maxsize=2000, ttl=7200)
 search_cache = TTLCache(maxsize=1000, ttl=1800)
 thread_pool = ThreadPoolExecutor(max_workers=50)
 
-# پراکسی وارپ برای یوتیوب
+# WARP Proxy strictly for YouTube to bypass Datacenter IP blocks (using socks5h to resolve DNS over proxy)
 WARP_PROXY = os.getenv("WARP_PROXY", "socks5h://127.0.0.1:40000")
 
 app = FastAPI(title="Media Extraction Engine")
@@ -56,7 +56,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     elif "xhamster" in target_lower or "xhcdn" in target_lower:
         ref = "https://xhamster.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -64,7 +64,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     elif "xnxx" in target_lower:
         ref = "https://www.xnxx.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -72,7 +72,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     elif "xvideos" in target_lower:
         ref = "https://www.xvideos.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -80,7 +80,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     elif "redtube" in target_lower:
         ref = "https://www.redtube.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -88,7 +88,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     elif "youporn" in target_lower:
         ref = "https://www.youporn.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -96,7 +96,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     else:
         ref = "https://www.pornhub.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc; bs=1; accessAgeDisclaimerPH=1; accessPH=1;"
@@ -159,7 +159,7 @@ def search_youtube_innertube(q: str) -> list:
         "query": q
     }
     try:
-        resp = session.post(api_url, json=payload, headers=headers, timeout=10)
+        resp = session.post(api_url, json=payload, headers=headers, timeout=12)
         if resp.status_code != 200:
             return []
         data = resp.json()
@@ -381,6 +381,7 @@ def search_redtube_with_ytdlp(q: str, page: int) -> list:
         logger.error(f"yt-dlp fallback search error for RedTube: {e}")
     return videos
 
+# تابع هوشمند و دقیق استخراج متادیتا همراه با رجکس‌های صحیح برای بازدید میلیونی
 def parse_metadata_fallback(url: str, provider: str) -> dict:
     if provider == "youtube":
         return {"view_count": 0, "upload_date": "", "thumbnail": "", "title": ""}
@@ -402,12 +403,20 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
     try:
         resp = requests.get(url, headers=headers, timeout=5.0)
         if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, 'html.parser')
+            text = resp.text
+            soup = BeautifulSoup(text, 'html.parser')
             view_count = 0
             upload_date = ""
             poster_url = ""
             scraped_title = ""
 
+            # ۱. گرفتن دقیق بازدید از متغیرهای جاوااسکریپت سایت 
+            if "pornhub.com" in url:
+                flash_match = re.search(r'"video_views"\s*:\s*"?(\d+)"?', text) or re.search(r'"views"\s*:\s*"?(\d+)"?', text)
+                if flash_match and int(flash_match.group(1)) > 100:
+                    view_count = int(flash_match.group(1))
+
+            # ۲. بررسی JSON-LD
             for script_tag in soup.find_all('script', type='application/ld+json'):
                 try:
                     ld_data = json.loads(script_tag.string or '{}')
@@ -420,59 +429,56 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                             t_url = ld_data.get('thumbnailUrl')
                             poster_url = t_url[0] if isinstance(t_url, list) else t_url
 
-                        interactions = ld_data.get('interactionStatistic', [])
-                        if isinstance(interactions, dict):
-                            interactions = [interactions]
-                        for inter in interactions:
-                            if inter.get('userInteractionCount') is not None:
-                                try:
-                                    view_count = int(inter.get('userInteractionCount'))
-                                    break
-                                except Exception:
-                                    pass
+                        if view_count == 0:
+                            interactions = ld_data.get('interactionStatistic', [])
+                            if isinstance(interactions, dict):
+                                interactions = [interactions]
+                            for inter in interactions:
+                                if inter.get('userInteractionCount') is not None:
+                                    try:
+                                        val = int(inter.get('userInteractionCount'))
+                                        if val > 0:
+                                            view_count = val
+                                            break
+                                    except Exception:
+                                        pass
                 except Exception:
                     pass
 
+            # ۳. استخراج از OpenGraph
             og_title = soup.find('meta', property='og:title')
             if not scraped_title and og_title and og_title.get('content'):
                 scraped_title = og_title.get('content').replace('&amp;', '&').strip()
-
-            if not scraped_title:
-                title_tag = soup.find('title')
-                if title_tag:
-                    scraped_title = title_tag.get_text().replace('&amp;', '&').split('- RedTube')[0].split('- YouPorn')[0].split('- xHamster')[0].split('- Pornhub')[0].strip()
 
             og_img = soup.find('meta', property='og:image')
             if not poster_url and og_img and og_img.get('content'):
                 poster_url = clean_thumbnail_url(og_img.get('content').replace('&amp;', '&'))
 
-            if not poster_url:
-                img_json = re.search(r'"image_url"\s*:\s*"([^"]+)"', resp.text)
-                if img_json:
-                    poster_url = clean_thumbnail_url(img_json.group(1).replace('\\/', '/'))
-
+            # ۴. فال‌بک از طریق تگ کلاس count
             if view_count == 0:
-                view_tag = soup.select_one('span.count, .views .count, .viewcount, span[class*="count"]')
-                if view_tag:
-                    raw_num = re.sub(r'[^\d]', '', view_tag.get_text())
-                    if raw_num.isdigit():
-                        view_count = int(raw_num)
+                view_elem = soup.select_one('div.views span.count, span.count, .viewsWrapper span.total')
+                if view_elem:
+                    raw_str = view_elem.get_text(strip=True).replace(',', '').replace('.', '')
+                    clean_digits = re.sub(r'[^\d]', '', raw_str)
+                    if clean_digits.isdigit() and int(clean_digits) > 50:
+                        view_count = int(clean_digits)
 
+            # ۵. فال‌بک نهایی رجکس
             if view_count == 0:
-                view_match = re.search(r'([\d,\.]+)\s*(?:Views|views|Vistas|M views|k views)', resp.text)
-                if view_match:
-                    raw_views = view_match.group(1).replace(',', '').replace('.', '')
-                    if 'k' in view_match.group(0).lower():
-                        view_count = int(float(raw_views.replace('k', '')) * 1000)
-                    elif 'm' in view_match.group(0).lower():
-                        view_count = int(float(raw_views.replace('m', '')) * 1000000)
-                    else:
-                        view_count = int(raw_views) if raw_views.isdigit() else 0
+                v_match = re.search(r'([\d,\.]+)\s*(?:Views|views|Vistas)', text)
+                if v_match:
+                    raw_val = v_match.group(1).replace(',', '')
+                    if 'k' in v_match.group(0).lower():
+                        view_count = int(float(raw_val) * 1000)
+                    elif 'm' in v_match.group(0).lower():
+                        view_count = int(float(raw_val) * 1000000)
+                    elif raw_val.isdigit():
+                        view_count = int(raw_val)
 
             if not upload_date:
-                date_match = re.search(r'(\d{4}-\d{2}-\d{2})|(\d{1,2}\s+[a-zA-Z]+\s+\d{4})', resp.text)
-                if date_match:
-                    upload_date = date_match.group(0)
+                d_match = re.search(r'(\d{4}-\d{2}-\d{2})', text)
+                if d_match:
+                    upload_date = d_match.group(0)
 
             return {"view_count": view_count, "upload_date": upload_date, "thumbnail": poster_url, "title": scraped_title}
     except Exception:
@@ -854,7 +860,13 @@ def extract_pornhub_direct_fallback(url: str) -> dict | None:
         meta = parse_metadata_fallback(url, "pornhub")
         title = f_data.get('video_title') or meta.get('title') or "Pornhub Video"
 
-        views = meta.get('view_count', 0)
+        # خواندن دقیق و مستقیم ویو از فلش‌وارز یا متا
+        raw_views = f_data.get('video_views') or f_data.get('views') or meta.get('view_count', 0)
+        try:
+            views = int(raw_views)
+        except Exception:
+            views = meta.get('view_count', 0)
+
         upload_date = meta.get('upload_date', '')
 
         return {
@@ -900,16 +912,19 @@ def extract_with_ytdlp(url: str) -> dict:
         'extract_flat': False,
         'nocheckcertificate': True,
         'http_headers': get_dynamic_headers(url),
-        'socket_timeout': 10, # جلوگیری از معطل ماندن سوکت و ارور upstream
+        'socket_timeout': 10,
     }
 
     if is_youtube:
         if WARP_PROXY:
             ydl_opts['proxy'] = WARP_PROXY
-        # استفاده از کلاینت‌های مستقیم و سریع برای جلوگیری از Timeout
+        
+        # ترکیب نهایی برای حل مشکل پیدا نشدن فرمت و همزمان بای‌پس کردن ربات یوتیوب
+        ydl_opts['format'] = 'all'
         ydl_opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['android', 'ios'],
+                'player_client': ['ios', 'tv_embedded', 'tv', 'android_creator'],
+                'player_skip': ['webpage', 'configs', 'js'],
             }
         }
     else:
@@ -1185,3 +1200,14 @@ async def proxy_video(request: Request, url: str, sig: str = "", exp: str = "", 
 @app.get("/")
 def health():
     return {"status": "Online", "engine": "Fast Edge Extraction Engine"}
+
+if __name__ == "__main__":
+    import uvicorn
+    raw_port = os.getenv("PORT", "8080").strip()
+    try:
+        bind_port = int(re.sub(r"[^0-9]", "", raw_port))
+    except Exception:
+        bind_port = 8080
+
+    logger.info(f"[*] Starting Uvicorn on 0.0.0.0:{bind_port}")
+    uvicorn.run("main:app", host="0.0.0.0", port=bind_port)
