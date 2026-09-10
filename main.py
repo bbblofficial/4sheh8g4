@@ -23,7 +23,6 @@ extraction_cache = TTLCache(maxsize=2000, ttl=7200)
 search_cache = TTLCache(maxsize=1000, ttl=1800)
 thread_pool = ThreadPoolExecutor(max_workers=50)
 
-# Cloudflare WARP SOCKS5 proxy configuration
 WARP_PROXY = os.getenv("WARP_PROXY", "socks5://127.0.0.1:40000")
 
 app = FastAPI(title="Media Extraction Engine")
@@ -36,7 +35,6 @@ app.add_middleware(
 )
 
 def get_warp_proxy() -> str | None:
-    """Returns proxy URL if WARP proxy is reachable/configured, else None."""
     return WARP_PROXY if WARP_PROXY else None
 
 def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
@@ -131,7 +129,6 @@ def is_invalid_title(t: str) -> bool:
 
 def search_youtube_with_ytdlp(q: str, page: int) -> list:
     videos = []
-    # Fetch 48 entries for standard grid pagination
     search_term = f"ytsearch48:{q}"
     ydl_opts = {
         'quiet': True,
@@ -841,7 +838,6 @@ def extract_with_ytdlp(url: str) -> dict:
 
                 if is_hls or 'mp4' in f_url or ext == 'mp4' or protocol.startswith('http'):
                     existing = qualities_dict.get(q_label)
-                    # Prefer standard direct video URLs or preserve HLS if progressive stream is missing
                     if not existing or (is_hls and existing['type'] == 'mp4') or (not is_hls and existing['type'] == 'hls' and not is_youtube):
                         qualities_dict[q_label] = {
                             "quality": q_label,
@@ -850,7 +846,6 @@ def extract_with_ytdlp(url: str) -> dict:
                             "height": height
                         }
 
-            # If provider is not YouTube and has HLS, favor HLS for adaptive bitrate
             if not is_youtube:
                 has_hls = any(q['type'] == 'hls' for q in qualities_dict.values())
                 if has_hls:
@@ -904,7 +899,6 @@ async def extract_endpoint(url: str):
     if not url: return JSONResponse({"status": "error", "error": "Missing URL"})
     target_url = url.strip()
     
-    # YouTube video ID or shortlink parsing
     yt_match = re.search(r'(?:youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|shorts\/|live\/)([A-Za-z0-9_-]{11})', target_url)
     if yt_match:
         target_url = f"https://www.youtube.com/watch?v={yt_match.group(1)}"
@@ -1039,3 +1033,15 @@ def health():
         "supported_providers": ["youtube", "pornhub", "xhamster", "youporn", "redtube", "xnxx", "xvideos"],
         "warp_proxy": WARP_PROXY
     }
+
+# Fail-safe launcher: converts string/corrupted ports safely to int
+if __name__ == "__main__":
+    import uvicorn
+    raw_port = os.getenv("PORT", "8080").strip()
+    try:
+        bind_port = int(re.sub(r"[^0-9]", "", raw_port))
+    except Exception:
+        bind_port = 8080
+
+    logger.info(f"[*] Starting Uvicorn on 0.0.0.0:{bind_port}")
+    uvicorn.run("main:app", host="0.0.0.0", port=bind_port)
