@@ -23,8 +23,8 @@ extraction_cache = TTLCache(maxsize=2000, ttl=7200)
 search_cache = TTLCache(maxsize=1000, ttl=1800)
 thread_pool = ThreadPoolExecutor(max_workers=50)
 
-# WARP proxy for YouTube only
-WARP_PROXY = os.getenv("WARP_PROXY", "socks5://127.0.0.1:40000")
+# پراکسی وارپ صرفاً برای یوتیوب
+WARP_PROXY = os.getenv("WARP_PROXY", "socks5h://127.0.0.1:40000")
 
 app = FastAPI(title="Media Extraction Engine")
 
@@ -43,6 +43,14 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
+        }
+    elif "pornhub.com" in target_lower or "phncdn.com" in target_lower:
+        ref = "https://www.pornhub.com/"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Referer": ref,
+            "Origin": ref.rstrip('/'),
+            "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc; bs=1; accessAgeDisclaimerPH=1; accessPH=1;"
         }
     elif "xhamster" in target_lower or "xhcdn" in target_lower:
         ref = "https://xhamster.com/"
@@ -90,7 +98,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
-            "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
+            "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc; bs=1; accessAgeDisclaimerPH=1; accessPH=1;"
         }
         
     if request_headers and "range" in request_headers:
@@ -769,6 +777,67 @@ def search_provider_robust(provider: str, q: str, page: int):
     search_cache[cache_key] = videos
     return videos
 
+# فال‌بک اختصاصی پورن‌هاب در صورت دریافت خطای 410 از yt-dlp
+def extract_pornhub_direct_fallback(url: str) -> dict | None:
+    try:
+        headers = get_dynamic_headers(url)
+        resp = requests.get(url, headers=headers, timeout=8.0)
+        if resp.status_code != 200:
+            return None
+
+        text = resp.text
+        flashvars_match = re.search(r'flashvars_\d+\s*=\s*({.+?});', text)
+        if not flashvars_match:
+            return None
+
+        import json
+        f_data = json.loads(flashvars_match.group(1))
+        media_defs = f_data.get('mediaDefinitions', [])
+
+        qualities = []
+        for item in media_defs:
+            v_url = item.get('videoUrl')
+            if not v_url or not isinstance(v_url, str) or not v_url.startswith('http'):
+                continue
+            q_val = item.get('quality')
+            if not q_val:
+                continue
+            is_hls = item.get('format') == 'hls' or '.m3u8' in v_url
+            q_label = f"{q_val}p" if str(q_val).isdigit() else str(q_val)
+
+            qualities.append({
+                "quality": q_label,
+                "url": v_url,
+                "type": "hls" if is_hls else "mp4"
+            })
+
+        if not qualities:
+            return None
+
+        # فیلتر کیفیت‌های HLS در صورت وجود
+        has_hls = any(q['type'] == 'hls' for q in qualities)
+        if has_hls:
+            qualities = [q for q in qualities if q['type'] == 'hls']
+
+        meta = parse_metadata_fallback(url, "pornhub")
+        title = f_data.get('video_title') or meta.get('title') or "Pornhub Video"
+
+        return {
+            "status": "success",
+            "title": html_parser.unescape(title),
+            "thumbnail": clean_thumbnail_url(f_data.get('image_url') or meta.get('thumbnail', '')),
+            "thumbnails": [clean_thumbnail_url(f_data.get('image_url') or meta.get('thumbnail', ''))],
+            "duration": int(f_data.get('video_duration', 0)),
+            "upload_date": meta.get('upload_date', ''),
+            "view_count": meta.get('view_count', 0),
+            "streams": {"qualities": qualities},
+            "url": url,
+            "provider": "pornhub"
+        }
+    except Exception as e:
+        logger.error(f"Pornhub direct fallback extraction error: {e}")
+        return None
+
 def extract_with_ytdlp(url: str) -> dict:
     is_pornhub = "pornhub.com" in url
     is_youtube = any(y in url.lower() for y in ["youtube.com", "youtu.be"])
@@ -794,7 +863,6 @@ def extract_with_ytdlp(url: str) -> dict:
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
-        'format': 'all' if is_youtube else 'bestvideo+bestaudio/best',
         'nocheckcertificate': True,
         'http_headers': get_dynamic_headers(url)
     }
@@ -804,11 +872,11 @@ def extract_with_ytdlp(url: str) -> dict:
             ydl_opts['proxy'] = WARP_PROXY
         ydl_opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['android_creator', 'ios'],
-                'player_skip': ['webpage', 'configs', 'js'],
+                'player_client': ['tv', 'ios', 'mweb', 'web_safari'],
             }
         }
     else:
+        ydl_opts['format'] = 'bestvideo+bestaudio/best'
         ydl_opts['age_limit'] = 21
 
     max_retries = 3
@@ -929,6 +997,12 @@ def extract_with_ytdlp(url: str) -> dict:
 
         except Exception as e:
             last_error = str(e)
+            # اگر خطای 410 روی پورن‌هاب رخ داد، بلافاصله فال‌بک مستقیم را اجرا کن
+            if is_pornhub and ("410" in last_error or "Gone" in last_error):
+                direct_res = extract_pornhub_direct_fallback(url)
+                if direct_res:
+                    return direct_res
+
             if attempt < max_retries - 1:
                 time.sleep(1.0)
                 continue
