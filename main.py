@@ -24,7 +24,7 @@ extraction_cache = TTLCache(maxsize=2000, ttl=7200)
 search_cache = TTLCache(maxsize=1000, ttl=1800)
 thread_pool = ThreadPoolExecutor(max_workers=50)
 
-# پراکسی وارپ صرفاً برای یوتیوب
+# پراکسی وارپ برای یوتیوب
 WARP_PROXY = os.getenv("WARP_PROXY", "socks5h://127.0.0.1:40000")
 
 app = FastAPI(title="Media Extraction Engine")
@@ -159,7 +159,7 @@ def search_youtube_innertube(q: str) -> list:
         "query": q
     }
     try:
-        resp = session.post(api_url, json=payload, headers=headers, timeout=12)
+        resp = session.post(api_url, json=payload, headers=headers, timeout=10)
         if resp.status_code != 200:
             return []
         data = resp.json()
@@ -381,7 +381,6 @@ def search_redtube_with_ytdlp(q: str, page: int) -> list:
         logger.error(f"yt-dlp fallback search error for RedTube: {e}")
     return videos
 
-# استخراج حرفه‌ای متادیتا با پشتیبانی اختصاصی از ساختار جدید JSON-LD پورن‌هاب
 def parse_metadata_fallback(url: str, provider: str) -> dict:
     if provider == "youtube":
         return {"view_count": 0, "upload_date": "", "thumbnail": "", "title": ""}
@@ -409,7 +408,6 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
             poster_url = ""
             scraped_title = ""
 
-            # ۱. بررسی ساختار جدید پورن‌هاب (JSON-LD Schema)
             for script_tag in soup.find_all('script', type='application/ld+json'):
                 try:
                     ld_data = json.loads(script_tag.string or '{}')
@@ -422,7 +420,6 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                             t_url = ld_data.get('thumbnailUrl')
                             poster_url = t_url[0] if isinstance(t_url, list) else t_url
 
-                        # استخراج تعداد بازدید دقیق از InteractionCounter
                         interactions = ld_data.get('interactionStatistic', [])
                         if isinstance(interactions, dict):
                             interactions = [interactions]
@@ -436,7 +433,6 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                 except Exception:
                     pass
 
-            # ۲. بررسی متاتگ‌های استاندارد OpenGraph
             og_title = soup.find('meta', property='og:title')
             if not scraped_title and og_title and og_title.get('content'):
                 scraped_title = og_title.get('content').replace('&amp;', '&').strip()
@@ -455,9 +451,7 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                 if img_json:
                     poster_url = clean_thumbnail_url(img_json.group(1).replace('\\/', '/'))
 
-            # ۳. استخراج ویو از متن صفحه در صورت عدم وجود در JSON-LD
             if view_count == 0:
-                # پورن‌هاب معمولاً در تگ span کلاس count یا viewcount دارد
                 view_tag = soup.select_one('span.count, .views .count, .viewcount, span[class*="count"]')
                 if view_tag:
                     raw_num = re.sub(r'[^\d]', '', view_tag.get_text())
@@ -475,7 +469,6 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
                     else:
                         view_count = int(raw_views) if raw_views.isdigit() else 0
 
-            # ۴. استخراج تاریخ از متن صفحه
             if not upload_date:
                 date_match = re.search(r'(\d{4}-\d{2}-\d{2})|(\d{1,2}\s+[a-zA-Z]+\s+\d{4})', resp.text)
                 if date_match:
@@ -819,7 +812,6 @@ def search_provider_robust(provider: str, q: str, page: int):
     search_cache[cache_key] = videos
     return videos
 
-# فال‌بک مستقیم و کامل پورن‌هاب با استخراج دقیق تعداد بازدید و تاریخ آپلود
 def extract_pornhub_direct_fallback(url: str) -> dict | None:
     try:
         headers = get_dynamic_headers(url)
@@ -862,7 +854,6 @@ def extract_pornhub_direct_fallback(url: str) -> dict | None:
         meta = parse_metadata_fallback(url, "pornhub")
         title = f_data.get('video_title') or meta.get('title') or "Pornhub Video"
 
-        # خواندن بازدید و تاریخ استخراج شده از JSON-LD
         views = meta.get('view_count', 0)
         upload_date = meta.get('upload_date', '')
 
@@ -908,22 +899,24 @@ def extract_with_ytdlp(url: str) -> dict:
         'no_warnings': True,
         'extract_flat': False,
         'nocheckcertificate': True,
-        'http_headers': get_dynamic_headers(url)
+        'http_headers': get_dynamic_headers(url),
+        'socket_timeout': 10, # جلوگیری از معطل ماندن سوکت و ارور upstream
     }
 
     if is_youtube:
         if WARP_PROXY:
             ydl_opts['proxy'] = WARP_PROXY
+        # استفاده از کلاینت‌های مستقیم و سریع برای جلوگیری از Timeout
         ydl_opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['tv', 'ios', 'mweb', 'web_safari'],
+                'player_client': ['android', 'ios'],
             }
         }
     else:
         ydl_opts['format'] = 'bestvideo+bestaudio/best'
         ydl_opts['age_limit'] = 21
 
-    max_retries = 3
+    max_retries = 2
     last_error = "Unknown Error"
 
     for attempt in range(max_retries):
@@ -936,7 +929,6 @@ def extract_with_ytdlp(url: str) -> dict:
             upload_date = info.get('upload_date', '') 
             view_count = info.get('view_count', 0)
 
-            # استخراج متادیتا برای تمامی سرویس‌ها از جمله پورن‌هاب در صورت کمبود اطلاعات
             extra_meta = parse_metadata_fallback(url, provider) if not is_youtube else {}
 
             if not is_youtube and (not title or is_invalid_title(title) or (len(title) <= 8 and title.isalnum())):
@@ -945,7 +937,6 @@ def extract_with_ytdlp(url: str) -> dict:
             if not title or is_invalid_title(title):
                 title = "Unknown Video"
 
-            # اصلاح کلیدی: جایگزین کردن ویو و تاریخ از متادیتا حتی اگر پورن‌هاب باشد
             view_count = view_count or extra_meta.get("view_count", 0)
             upload_date = upload_date or extra_meta.get("upload_date", "")
 
@@ -1021,7 +1012,7 @@ def extract_with_ytdlp(url: str) -> dict:
             if not qualities:
                 last_error = "No valid streams found"
                 if attempt < max_retries - 1:
-                    time.sleep(1.0)
+                    time.sleep(0.5)
                     continue
                 return {"status": "error", "error": last_error, "url": url}
 
@@ -1049,7 +1040,7 @@ def extract_with_ytdlp(url: str) -> dict:
                     return direct_res
 
             if attempt < max_retries - 1:
-                time.sleep(1.0)
+                time.sleep(0.5)
                 continue
 
     return {"status": "error", "error": f"Failed after {max_retries} retries: {last_error}", "url": url}
