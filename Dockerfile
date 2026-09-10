@@ -3,7 +3,7 @@ FROM python:3.11-slim-bookworm
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# Install system dependencies, gpg, curl, and ffmpeg
+# Install system utilities, gpg, curl, and ffmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gpg \
@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Add Cloudflare official apt repository and install cloudflare-warp
+# Install official Cloudflare WARP client
 RUN curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg && \
     echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ bookworm main" | tee /etc/apt/sources.list.d/cloudflare-client.list && \
     apt-get update && \
@@ -30,5 +30,5 @@ COPY main.py .
 
 RUN chmod +x entrypoint.sh
 
-# Run via explicit bash shell so environment variables are properly evaluated
+# Run startup script inside bash shell
 CMD ["/bin/bash", "./entrypoint.sh"]
