@@ -28,7 +28,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY entrypoint.sh .
 COPY main.py .
 
-RUN chmod +x entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # Run startup script inside bash shell
-CMD ["/bin/bash", "./entrypoint.sh"]
+CMD ["bash", "/app/entrypoint.sh"]

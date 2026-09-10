@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -e
 
+# بررسی و مقداردهی پیش‌فرض به PORT در صورت خالی بودن
+export PORT="${PORT:-8080}"
+echo "[*] Assigned service port: $PORT"
+
 echo "[*] Starting Cloudflare warp-svc daemon..."
 warp-svc &
 sleep 2
