@@ -42,9 +42,9 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     
     if "youtube.com" in target_lower or "googlevideo.com" in target_lower or "youtu.be" in target_lower:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            "Referer": "https://www.youtube.com/",
-            "Origin": "https://www.youtube.com"
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+            "Referer": "https://m.youtube.com/",
+            "Origin": "https://m.youtube.com"
         }
     elif "xhamster" in target_lower or "xhcdn" in target_lower:
         ref = "https://xhamster.com/"
@@ -126,10 +126,10 @@ def is_invalid_title(t: str) -> bool:
     if re.search(r'\d{1,2}:\d{2}', t_clean) and len(t_clean) <= 12:
         return True
     return False
+
 def search_youtube_with_ytdlp(q: str, page: int) -> list:
     videos = []
-    # افزودن فاصله بعد از ytsearch و تعیین کلاینت‌های پایدار برای مرحله سرچ
-    search_term = f"ytsearch48: {q.strip()}"
+    search_term = f"ytsearch48:{q.strip()}"
     
     ydl_opts = {
         'quiet': True,
@@ -140,7 +140,7 @@ def search_youtube_with_ytdlp(q: str, page: int) -> list:
         'ignoreerrors': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['web', 'android'],
+                'player_client': ['ios', 'mweb', 'tv_embedded'],
                 'player_skip': ['configs', 'webpage'],
             }
         }
@@ -158,22 +158,17 @@ def search_youtube_with_ytdlp(q: str, page: int) -> list:
             for entry in entries:
                 if not entry:
                     continue
-                
                 vkey = entry.get('id') or ''
                 if not vkey:
                     continue
-                    
                 url = entry.get('url') or f"https://www.youtube.com/watch?v={vkey}"
                 title = html_parser.unescape(entry.get('title', ''))
-                
                 if not title or is_invalid_title(title):
                     continue
 
                 thumb = entry.get('thumbnail', '')
                 if not thumb and entry.get('thumbnails'):
                     thumb = entry.get('thumbnails')[-1].get('url', '')
-
-                # اگر تامبنیل وجود نداشت از فرمت استاندارد یوتیوب استفاده می‌شود
                 if not thumb:
                     thumb = f"https://i.ytimg.com/vi/{vkey}/hqdefault.jpg"
 
@@ -188,7 +183,6 @@ def search_youtube_with_ytdlp(q: str, page: int) -> list:
                 })
     except Exception as e:
         logger.error(f"yt-dlp search error for YouTube: {e}")
-        
     return videos
 
 def search_pornhub_with_ytdlp(q: str, page: int) -> list:
@@ -770,7 +764,7 @@ def extract_with_ytdlp(url: str) -> dict:
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
-        'format': 'all',  # Extract all available formats and manifests
+        'format': 'all',
         'nocheckcertificate': True,
         'http_headers': get_dynamic_headers(url)
     }
@@ -779,10 +773,11 @@ def extract_with_ytdlp(url: str) -> dict:
         proxy = get_warp_proxy()
         if proxy:
             ydl_opts['proxy'] = proxy
+        # Anti-bot bypass: iOS / mobile web / tv_embedded do not trigger the desktop web bot check
         ydl_opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['android', 'ios', 'tv_embedded', 'web'],
-                'player_skip': ['configs'],
+                'player_client': ['ios', 'mweb', 'tv_embedded'],
+                'player_skip': ['webpage', 'configs'],
             }
         }
     else:
@@ -836,12 +831,10 @@ def extract_with_ytdlp(url: str) -> dict:
 
             qualities_dict = {}
 
-            # Parse ALL video formats (including adaptive DASH streams for 1080p, 720p, etc.)
             for f in info.get('formats', []):
                 f_url = f.get('url', '')
                 if not f_url: 
                     continue
-                # Skip audio-only streams
                 if f.get('vcodec') == 'none': 
                     continue
 
@@ -878,7 +871,6 @@ def extract_with_ytdlp(url: str) -> dict:
                     "height": height
                 }
 
-                # Prioritize formats with audio, then newer/higher-bitrate streams
                 if q_label not in qualities_dict:
                     qualities_dict[q_label] = current_entry
                 else:
