@@ -24,9 +24,9 @@ RUN curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -U -r requirements.txt
 
-# --- Intercept Railway's uvicorn command ---
+# --- Intercept Railway's raw uvicorn start command ---
 RUN if [ -f /usr/local/bin/uvicorn ]; then \
         mv /usr/local/bin/uvicorn /usr/local/bin/uvicorn-real; \
     fi && \
@@ -34,7 +34,7 @@ RUN if [ -f /usr/local/bin/uvicorn ]; then \
 #!/bin/bash
 set -e
 
-echo "[*] Initializing Cloudflare WARP..."
+echo "[*] Initializing Cloudflare WARP via wrapper..."
 warp-svc &
 sleep 2
 warp-cli --accept-tos registration new || true
@@ -56,13 +56,13 @@ done
 echo "[*] Launching Uvicorn on port $REAL_PORT..."
 exec /usr/local/bin/uvicorn-real "${ARGS[@]}"
 EOF
+
 RUN dos2unix /usr/local/bin/uvicorn && chmod +x /usr/local/bin/uvicorn
-# ------------------------------------------
+# ----------------------------------------------------
 
 COPY entrypoint.sh .
 COPY main.py .
 
-# تبدیل فرمت خطوط به لینوکس و دادن دسترسی اجرا
 RUN dos2unix entrypoint.sh && chmod +x entrypoint.sh
 
 CMD ["bash", "./entrypoint.sh"]

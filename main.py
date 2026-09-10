@@ -42,14 +42,14 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     
     if "youtube.com" in target_lower or "googlevideo.com" in target_lower or "youtu.be" in target_lower:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": "https://www.youtube.com/",
             "Origin": "https://www.youtube.com"
         }
     elif "xhamster" in target_lower or "xhcdn" in target_lower:
         ref = "https://xhamster.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -57,7 +57,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     elif "xnxx" in target_lower:
         ref = "https://www.xnxx.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -65,7 +65,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     elif "xvideos" in target_lower:
         ref = "https://www.xvideos.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -73,7 +73,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     elif "redtube" in target_lower:
         ref = "https://www.redtube.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -81,7 +81,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     elif "youporn" in target_lower:
         ref = "https://www.youporn.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -89,7 +89,7 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
     else:
         ref = "https://www.pornhub.com/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": ref.rstrip('/'),
             "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc;"
@@ -136,6 +136,11 @@ def search_youtube_with_ytdlp(q: str, page: int) -> list:
         'extract_flat': 'in_playlist',
         'skip_download': True,
         'nocheckcertificate': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'tv_embedded'],
+            }
+        }
     }
     proxy = get_warp_proxy()
     if proxy:
@@ -759,6 +764,12 @@ def extract_with_ytdlp(url: str) -> dict:
         proxy = get_warp_proxy()
         if proxy:
             ydl_opts['proxy'] = proxy
+        ydl_opts['extractor_args'] = {
+            'youtube': {
+                'player_client': ['android', 'ios', 'tv_embedded'],
+                'player_skip': ['webpage', 'configs'],
+            }
+        }
     else:
         ydl_opts['age_limit'] = 21
 
@@ -1034,7 +1045,6 @@ def health():
         "warp_proxy": WARP_PROXY
     }
 
-# Fail-safe launcher: converts string/corrupted ports safely to int
 if __name__ == "__main__":
     import uvicorn
     raw_port = os.getenv("PORT", "8080").strip()
