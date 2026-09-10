@@ -23,6 +23,7 @@ extraction_cache = TTLCache(maxsize=2000, ttl=7200)
 search_cache = TTLCache(maxsize=1000, ttl=1800)
 thread_pool = ThreadPoolExecutor(max_workers=50)
 
+# WARP proxy: STRICTLY reserved for YouTube ONLY
 WARP_PROXY = os.getenv("WARP_PROXY", "socks5://127.0.0.1:40000")
 
 app = FastAPI(title="Media Extraction Engine")
@@ -45,6 +46,14 @@ def get_dynamic_headers(target: str, request_headers: dict = None) -> dict:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
             "Referer": "https://www.youtube.com/",
             "Origin": "https://www.youtube.com"
+        }
+    elif "pornhub.com" in target_lower or "phncdn.com" in target_lower:
+        ref = "https://www.pornhub.com/"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Referer": ref,
+            "Origin": ref.rstrip('/'),
+            "Cookie": "has_accepted_cookie=1; age_verified=1; platform=pc; bs=1; accessAgeDisclaimerPH=1;"
         }
     elif "xhamster" in target_lower or "xhcdn" in target_lower:
         ref = "https://xhamster.com/"
@@ -127,13 +136,10 @@ def is_invalid_title(t: str) -> bool:
         return True
     return False
 
-# ----------------- Robust YouTube Search via InnerTube API -----------------
+# ----------------- YouTube InnerTube Search (via WARP) -----------------
 def search_youtube_innertube(q: str, page: int = 1) -> list:
-    """
-    Direct InnerTube API call that bypasses YouTube search HTML scraping restrictions.
-    Supports infinite scroll pagination.
-    """
     session = requests.Session()
+    # ONLY YouTube uses WARP
     proxy = get_warp_proxy()
     if proxy:
         session.proxies = {"http": proxy, "https": proxy}
@@ -162,7 +168,7 @@ def search_youtube_innertube(q: str, page: int = 1) -> list:
     try:
         resp = session.post(api_url, json=payload, headers=headers, timeout=12)
         if resp.status_code != 200:
-            logger.error(f"YouTube InnerTube error: status {resp.status_code}")
+            logger.error(f"YouTube InnerTube status {resp.status_code}")
             return []
 
         data = resp.json()
@@ -217,7 +223,6 @@ def search_youtube_innertube(q: str, page: int = 1) -> list:
 
         walk(data)
 
-        # Deduplicate results
         seen = set()
         deduped = []
         for v in videos:
@@ -228,10 +233,10 @@ def search_youtube_innertube(q: str, page: int = 1) -> list:
         return deduped[:48]
 
     except Exception as e:
-        logger.error(f"YouTube InnerTube search failed: {e}")
+        logger.error(f"YouTube InnerTube search error: {e}")
         return []
 
-# ----------------- Adult Providers Search Fallbacks -----------------
+# ----------------- Adult Providers (Direct / NO WARP) -----------------
 def search_pornhub_with_ytdlp(q: str, page: int) -> list:
     videos = []
     search_term = f"phsearch48:{q}"
@@ -242,6 +247,7 @@ def search_pornhub_with_ytdlp(q: str, page: int) -> list:
         'skip_download': True,
         'nocheckcertificate': True,
         'age_limit': 21,
+        'http_headers': get_dynamic_headers("https://www.pornhub.com/")
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -409,7 +415,8 @@ def parse_metadata_fallback(url: str, provider: str) -> dict:
     url = re.sub(r'https?://[a-zA-Z0-9-]+\.' + provider + r'\.com', base_domain, url)
     headers = get_dynamic_headers(url)
     try:
-        resp = requests.get(url, headers=headers, timeout=3.5)
+        # Normal direct request, NO proxy
+        resp = requests.get(url, headers=headers, timeout=4.0)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
             view_count = 0
@@ -485,6 +492,7 @@ def search_provider_robust(provider: str, q: str, page: int):
 
     for attempt in range(3):
         try:
+            # DIRECT request: NO WARP PROXY FOR ADULT SITES
             resp = requests.get(search_url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.text, 'html.parser')
@@ -809,6 +817,7 @@ def extract_with_ytdlp(url: str) -> dict:
     elif "youporn.com" in url:
         provider = "youporn"
 
+    # Base options without any proxy
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -818,13 +827,12 @@ def extract_with_ytdlp(url: str) -> dict:
     }
 
     if is_youtube:
+        # EXCLUSIVELY assign Cloudflare WARP proxy to YouTube
         proxy = get_warp_proxy()
         if proxy:
             ydl_opts['proxy'] = proxy
 
-        # Critical Anti-Bot Bypass:
-        # Use android_creator & android client while completely skipping webpage
-        # This completely stops the "Sign in to confirm you're not a bot" challenge on datacenter IPs.
+        # YouTube Anti-Bot configuration
         ydl_opts['extractor_args'] = {
             'youtube': {
                 'player_client': ['android_creator', 'android', 'ios'],
@@ -832,6 +840,7 @@ def extract_with_ytdlp(url: str) -> dict:
             }
         }
     else:
+        # Adult providers use DEFAULT connection (NO WARP PROXY)
         ydl_opts['age_limit'] = 21
 
     max_retries = 3
@@ -882,7 +891,7 @@ def extract_with_ytdlp(url: str) -> dict:
 
             qualities_dict = {}
 
-            # Gather all video resolutions (including 1080p, 720p, 480p, 360p, etc.)
+            # Gather all video resolutions
             for f in info.get('formats', []):
                 f_url = f.get('url', '')
                 if not f_url: 
@@ -968,7 +977,17 @@ def extract_with_ytdlp(url: str) -> dict:
             return result
 
         except Exception as e:
-            last_error = str(e)
+            err_str = str(e)
+            last_error = err_str
+
+            # Check for HTTP 410 Gone (video deleted on host)
+            if "410" in err_str or "Gone" in err_str:
+                return {
+                    "status": "error",
+                    "error": "This video has been deleted or removed by the host (HTTP 410: Gone).",
+                    "url": url
+                }
+
             if attempt < max_retries - 1:
                 time.sleep(1.0)
                 continue
