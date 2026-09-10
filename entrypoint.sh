@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
 echo "[*] Starting Cloudflare warp-svc daemon..."
@@ -6,7 +6,6 @@ warp-svc &
 sleep 2
 
 echo "[*] Initializing WARP client registration..."
-# Registers a clean free WARP device account
 warp-cli --accept-tos registration new || true
 
 echo "[*] Switching WARP to local SOCKS5 proxy mode..."
@@ -25,7 +24,12 @@ for i in {1..20}; do
   sleep 1
 done
 
-# Railway exposes the web port via $PORT (defaults to 8080 if running locally)
-PORT="${PORT:-8080}"
-echo "[*] Launching Media Extraction Engine on port $PORT..."
-exec uvicorn main:app --host 0.0.0.0 --port "$PORT"
+# Strip any invalid non-numeric values passed into PORT
+APP_PORT="${PORT:-8080}"
+if ! [[ "$APP_PORT" =~ ^[0-9]+$ ]]; then
+  echo "[!] Warning: Invalid PORT '$APP_PORT' detected, defaulting to 8080"
+  APP_PORT=8080
+fi
+
+echo "[*] Launching Media Extraction Engine on port $APP_PORT..."
+exec uvicorn main:app --host 0.0.0.0 --port "$APP_PORT"
