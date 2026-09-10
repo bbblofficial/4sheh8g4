@@ -24,12 +24,5 @@ for i in {1..20}; do
   sleep 1
 done
 
-# Strip any invalid non-numeric values passed into PORT
-APP_PORT="${PORT:-8080}"
-if ! [[ "$APP_PORT" =~ ^[0-9]+$ ]]; then
-  echo "[!] Warning: Invalid PORT '$APP_PORT' detected, defaulting to 8080"
-  APP_PORT=8080
-fi
-
-echo "[*] Launching Media Extraction Engine on port $APP_PORT..."
-exec uvicorn main:app --host 0.0.0.0 --port "$APP_PORT"
+echo "[*] Starting application directly with python3..."
+exec python3 main.py
