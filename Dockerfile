@@ -3,7 +3,7 @@ FROM python:3.11-slim-bookworm
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# Install basic networking utilities, gpg, and ffmpeg
+# Install system dependencies, gpg, curl, and ffmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gpg \
@@ -22,16 +22,13 @@ RUN curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor
 
 WORKDIR /app
 
-# Install Python requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
 COPY entrypoint.sh .
 COPY main.py .
 
 RUN chmod +x entrypoint.sh
 
-EXPOSE 8080
-
-ENTRYPOINT ["./entrypoint.sh"]
+# Run via explicit bash shell so environment variables are properly evaluated
+CMD ["/bin/bash", "./entrypoint.sh"]
