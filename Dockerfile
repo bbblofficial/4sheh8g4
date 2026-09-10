@@ -3,7 +3,7 @@ FROM python:3.11-slim-bookworm
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# Install system utilities, dos2unix, curl, and ffmpeg
+# Install system dependencies, dos2unix, curl, and tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gpg \
@@ -26,7 +26,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -U -r requirements.txt
 
-# --- Intercept Railway's raw uvicorn start command ---
+# Intercept Railway custom uvicorn command if executed without bash
 RUN if [ -f /usr/local/bin/uvicorn ]; then \
         mv /usr/local/bin/uvicorn /usr/local/bin/uvicorn-real; \
     fi && \
@@ -36,7 +36,7 @@ set -e
 
 echo "[*] Initializing Cloudflare WARP via wrapper..."
 warp-svc &
-sleep 2
+sleep 3
 warp-cli --accept-tos registration new || true
 warp-cli --accept-tos mode proxy
 warp-cli --accept-tos proxy port 40000
@@ -58,7 +58,6 @@ exec /usr/local/bin/uvicorn-real "${ARGS[@]}"
 EOF
 
 RUN dos2unix /usr/local/bin/uvicorn && chmod +x /usr/local/bin/uvicorn
-# ----------------------------------------------------
 
 COPY entrypoint.sh .
 COPY main.py .

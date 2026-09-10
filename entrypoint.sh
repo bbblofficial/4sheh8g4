@@ -4,28 +4,30 @@ set -e
 export PORT="${PORT:-8080}"
 echo "[*] Assigned service port: $PORT"
 
+# Start WARP background service daemon
 echo "[*] Starting Cloudflare warp-svc daemon..."
 warp-svc &
-sleep 2
+sleep 3
 
-echo "[*] Initializing WARP client registration..."
+echo "[*] Registering WARP client..."
 warp-cli --accept-tos registration new || true
 
-echo "[*] Switching WARP to local SOCKS5 proxy mode..."
+echo "[*] Configuring WARP local SOCKS5 proxy on port 40000..."
 warp-cli --accept-tos mode proxy
 warp-cli --accept-tos proxy port 40000
 warp-cli --accept-tos connect
 
+# Verify WARP tunnel connection
 echo "[*] Verifying SOCKS5 proxy connection to Cloudflare..."
 for i in {1..20}; do
   TRACE=$(curl -s --socks5 127.0.0.1:40000 https://www.cloudflare.com/cdn-cgi/trace | grep "warp=" || true)
   if [[ "$TRACE" == "warp=on" || "$TRACE" == "warp=plus" ]]; then
-    echo "[+] Cloudflare WARP SOCKS5 proxy verified and connected ($TRACE)!"
+    echo "[+] Cloudflare WARP SOCKS5 verified and connected ($TRACE)!"
     break
   fi
   echo "[-] Waiting for WARP proxy tunnel... ($i/20)"
   sleep 1
 done
 
-echo "[*] Starting application directly with python3..."
+echo "[*] Launching application directly with python3..."
 exec python3 main.py
