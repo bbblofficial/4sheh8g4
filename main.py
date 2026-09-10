@@ -23,7 +23,7 @@ extraction_cache = TTLCache(maxsize=2000, ttl=7200)
 search_cache = TTLCache(maxsize=1000, ttl=1800)
 thread_pool = ThreadPoolExecutor(max_workers=50)
 
-# پراکسی وارپ صرفاً برای یوتیوب
+# WARP proxy for YouTube only
 WARP_PROXY = os.getenv("WARP_PROXY", "socks5://127.0.0.1:40000")
 
 app = FastAPI(title="Media Extraction Engine")
@@ -125,7 +125,6 @@ def is_invalid_title(t: str) -> bool:
         return True
     return False
 
-# سرچ اختصاصی و ضد تحریم یوتیوب بدون دستکاری سایر سرویس‌ها
 def search_youtube_innertube(q: str) -> list:
     session = requests.Session()
     if WARP_PROXY:
@@ -795,12 +794,11 @@ def extract_with_ytdlp(url: str) -> dict:
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
-        'format': 'bestvideo+bestaudio/best',
+        'format': 'all' if is_youtube else 'bestvideo+bestaudio/best',
         'nocheckcertificate': True,
         'http_headers': get_dynamic_headers(url)
     }
 
-    # وارپ و کلاینت ضد-ربات اندروید صرفاً برای یوتیوب
     if is_youtube:
         if WARP_PROXY:
             ydl_opts['proxy'] = WARP_PROXY
